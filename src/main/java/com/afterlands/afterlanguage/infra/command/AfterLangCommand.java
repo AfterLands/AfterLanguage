@@ -1,13 +1,16 @@
 package com.afterlands.afterlanguage.infra.command;
 
 import com.afterlands.afterlanguage.bootstrap.PluginRegistry;
-import com.afterlands.core.commands.annotations.Command;
-import com.afterlands.core.commands.annotations.SubCommand;
-import com.afterlands.core.commands.annotations.Arg;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabCompleter;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -20,8 +23,7 @@ import java.util.Map;
  *     <li>/afterlang cache - Show cache statistics</li>
  * </ul>
  */
-@Command(name = "afterlang", permission = "afterlanguage.admin", aliases = {"alang"})
-public class AfterLangCommand {
+public class AfterLangCommand implements CommandExecutor, TabCompleter {
 
     private final PluginRegistry registry;
 
@@ -29,27 +31,47 @@ public class AfterLangCommand {
         this.registry = registry;
     }
 
+    @Override
+    public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
+        if (!sender.hasPermission("afterlanguage.admin")) {
+            sender.sendMessage("§cYou do not have permission to use this command.");
+            return true;
+        }
+
+        if (args.length == 0) {
+            // Default: show stats
+            return handleStats(sender);
+        }
+
+        String subCommand = args[0].toLowerCase();
+
+        return switch (subCommand) {
+            case "reload" -> handleReload(sender, args);
+            case "stats" -> handleStats(sender);
+            case "cache" -> handleCacheStats(sender);
+            default -> {
+                sender.sendMessage("§cUnknown subcommand. Usage: /afterlang <reload|stats|cache>");
+                yield true;
+            }
+        };
+    }
+
     /**
-     * Reloads translations.
-     *
-     * @param sender Command sender
-     * @param namespace Optional namespace to reload (null = all)
+     * Handles /afterlang reload [namespace]
      */
-    @SubCommand(name = "reload")
-    public void reload(
-            @NotNull CommandSender sender,
-            @Arg(name = "namespace", optional = true) String namespace
-    ) {
+    private boolean handleReload(@NotNull CommandSender sender, @NotNull String[] args) {
         sender.sendMessage("§7Reloading translations...");
 
         long startTime = System.currentTimeMillis();
 
         try {
-            if (namespace != null) {
+            if (args.length > 1) {
                 // Reload specific namespace
+                String namespace = args[1];
+
                 if (!registry.getNamespaceManager().isRegistered(namespace)) {
                     sender.sendMessage("§cNamespace not found: " + namespace);
-                    return;
+                    return true;
                 }
 
                 registry.getNamespaceManager().reloadNamespace(namespace).join();
@@ -72,13 +94,14 @@ public class AfterLangCommand {
             registry.getLogger().warning("[AfterLangCommand] Reload failed: " + e.getMessage());
             e.printStackTrace();
         }
+
+        return true;
     }
 
     /**
-     * Shows plugin statistics.
+     * Handles /afterlang stats
      */
-    @SubCommand(name = "stats")
-    public void stats(@NotNull CommandSender sender) {
+    private boolean handleStats(@NotNull CommandSender sender) {
         sender.sendMessage("§7§m                                    ");
         sender.sendMessage("§6§lAfterLanguage Statistics");
         sender.sendMessage("");
@@ -111,13 +134,14 @@ public class AfterLangCommand {
         sender.sendMessage("§7L1 Cache Hit Rate: §e" + formatPercent(hotStats.hitRate()));
 
         sender.sendMessage("§7§m                                    ");
+
+        return true;
     }
 
     /**
-     * Shows cache statistics.
+     * Handles /afterlang cache
      */
-    @SubCommand(name = "cache")
-    public void cacheStats(@NotNull CommandSender sender) {
+    private boolean handleCacheStats(@NotNull CommandSender sender) {
         sender.sendMessage("§7§m                                    ");
         sender.sendMessage("§6§lCache Statistics");
         sender.sendMessage("");
@@ -129,7 +153,7 @@ public class AfterLangCommand {
         sender.sendMessage("  §7Hits: §e" + l1Stats.hitCount() + " §7(" + formatPercent(l1Stats.hitRate()) + ")");
         sender.sendMessage("  §7Misses: §e" + l1Stats.missCount() + " §7(" + formatPercent(l1Stats.missRate()) + ")");
         sender.sendMessage("  §7Evictions: §e" + l1Stats.evictionCount());
-        sender.sendMessage("  §7Load Time: §e" + formatNanos(l1Stats.averageLoadPenalty()));
+        sender.sendMessage("  §7Avg Load Time: §e" + formatNanos(l1Stats.averageLoadPenalty()));
 
         sender.sendMessage("");
 
@@ -140,7 +164,7 @@ public class AfterLangCommand {
         sender.sendMessage("  §7Hits: §e" + l3Stats.hitCount() + " §7(" + formatPercent(l3Stats.hitRate()) + ")");
         sender.sendMessage("  §7Misses: §e" + l3Stats.missCount() + " §7(" + formatPercent(l3Stats.missRate()) + ")");
         sender.sendMessage("  §7Evictions: §e" + l3Stats.evictionCount());
-        sender.sendMessage("  §7Load Time: §e" + formatNanos(l3Stats.averageLoadPenalty()));
+        sender.sendMessage("  §7Avg Load Time: §e" + formatNanos(l3Stats.averageLoadPenalty()));
 
         sender.sendMessage("");
 
@@ -154,6 +178,8 @@ public class AfterLangCommand {
         sender.sendMessage("§7Use §e/afterlang reload §7to clear caches");
 
         sender.sendMessage("§7§m                                    ");
+
+        return true;
     }
 
     /**
@@ -165,7 +191,7 @@ public class AfterLangCommand {
     }
 
     /**
-     * Formats nanoseconds to milliseconds.
+     * Formats nanoseconds to readable time.
      */
     @NotNull
     private String formatNanos(double nanos) {
@@ -176,5 +202,36 @@ public class AfterLangCommand {
         } else {
             return String.format("%.2fms", nanos / 1_000_000);
         }
+    }
+
+    @Nullable
+    @Override
+    public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
+        if (!sender.hasPermission("afterlanguage.admin")) {
+            return List.of();
+        }
+
+        List<String> completions = new ArrayList<>();
+
+        if (args.length == 1) {
+            // Subcommands
+            completions.add("reload");
+            completions.add("stats");
+            completions.add("cache");
+
+            String input = args[0].toLowerCase();
+            completions.removeIf(s -> !s.startsWith(input));
+
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("reload")) {
+            // Namespace names
+            String input = args[1].toLowerCase();
+            for (String namespace : registry.getNamespaceManager().getRegisteredNamespaces()) {
+                if (namespace.startsWith(input)) {
+                    completions.add(namespace);
+                }
+            }
+        }
+
+        return completions;
     }
 }

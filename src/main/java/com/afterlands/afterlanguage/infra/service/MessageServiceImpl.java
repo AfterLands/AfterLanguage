@@ -5,6 +5,7 @@ import com.afterlands.afterlanguage.infra.persistence.PlayerLanguageRepository;
 import com.afterlands.core.api.messages.MessageKey;
 import com.afterlands.core.api.messages.Placeholder;
 import com.afterlands.core.config.MessageService;
+import com.afterlands.core.metrics.MetricsService;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -32,6 +33,7 @@ public class MessageServiceImpl implements MessageService {
 
     private final MessageResolver messageResolver;
     private final PlayerLanguageRepository languageRepo;
+    private final MetricsService metrics;
     private final String defaultLanguage;
     private final Logger logger;
     private final boolean debug;
@@ -41,6 +43,7 @@ public class MessageServiceImpl implements MessageService {
      *
      * @param messageResolver Translation resolver
      * @param languageRepo Player language repository
+     * @param metrics Metrics service
      * @param defaultLanguage Default language code
      * @param logger Logger
      * @param debug Enable debug logging
@@ -48,12 +51,14 @@ public class MessageServiceImpl implements MessageService {
     public MessageServiceImpl(
             @NotNull MessageResolver messageResolver,
             @NotNull PlayerLanguageRepository languageRepo,
+            @NotNull MetricsService metrics,
             @NotNull String defaultLanguage,
             @NotNull Logger logger,
             boolean debug
     ) {
         this.messageResolver = Objects.requireNonNull(messageResolver, "messageResolver");
         this.languageRepo = Objects.requireNonNull(languageRepo, "languageRepo");
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.defaultLanguage = Objects.requireNonNull(defaultLanguage, "defaultLanguage");
         this.logger = Objects.requireNonNull(logger, "logger");
         this.debug = debug;
@@ -65,14 +70,23 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public void send(@NotNull Player player, @NotNull MessageKey key, @NotNull Placeholder... placeholders) {
-        Objects.requireNonNull(player, "player");
-        Objects.requireNonNull(key, "key");
+        long start = System.nanoTime();
+        try {
+            Objects.requireNonNull(player, "player");
+            Objects.requireNonNull(key, "key");
 
-        String language = getPlayerLanguage(player.getUniqueId());
-        String message = messageResolver.resolve(language, key.namespace(), key.path(), placeholders);
+            String language = getPlayerLanguage(player.getUniqueId());
+            String message = messageResolver.resolve(language, key.namespace(), key.path(), placeholders);
 
-        if (!message.isEmpty()) {
-            player.sendMessage(format(message));
+            if (!message.isEmpty()) {
+                player.sendMessage(format(message));
+            }
+
+            metrics.recordTime("afterlanguage.send", System.nanoTime() - start);
+            metrics.increment("afterlanguage.send.success");
+        } catch (Exception e) {
+            metrics.increment("afterlanguage.send.failure");
+            throw e;
         }
     }
 
@@ -100,11 +114,22 @@ public class MessageServiceImpl implements MessageService {
     @Override
     @NotNull
     public String get(@NotNull Player player, @NotNull MessageKey key, @NotNull Placeholder... placeholders) {
-        Objects.requireNonNull(player, "player");
-        Objects.requireNonNull(key, "key");
+        long start = System.nanoTime();
+        try {
+            Objects.requireNonNull(player, "player");
+            Objects.requireNonNull(key, "key");
 
-        String language = getPlayerLanguage(player.getUniqueId());
-        return messageResolver.resolve(language, key.namespace(), key.path(), placeholders);
+            String language = getPlayerLanguage(player.getUniqueId());
+            String result = messageResolver.resolve(language, key.namespace(), key.path(), placeholders);
+
+            metrics.recordTime("afterlanguage.get", System.nanoTime() - start);
+            metrics.increment("afterlanguage.get.success");
+
+            return result;
+        } catch (Exception e) {
+            metrics.increment("afterlanguage.get.failure");
+            throw e;
+        }
     }
 
     @Override

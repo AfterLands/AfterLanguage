@@ -208,6 +208,7 @@ public class PluginRegistry {
             this.messageService = new MessageServiceImpl(
                     messageResolver,
                     playerLanguageRepo,
+                    afterCore.metrics(),
                     defaultLanguage.code(),
                     logger,
                     debug
@@ -337,18 +338,31 @@ public class PluginRegistry {
     }
 
     /**
-     * Registers commands using AfterCore CommandService.
+     * Registers commands.
      */
     public void registerCommands() {
         // Create command instances
         this.langCommand = new LangCommand(this);
         this.afterLangCommand = new AfterLangCommand(this);
 
-        // Register via AfterCore CommandService
-        afterCore.commands().registerCommand(plugin, langCommand);
-        afterCore.commands().registerCommand(plugin, afterLangCommand);
+        // Register commands via Bukkit
+        var langCmd = plugin.getCommand("lang");
+        if (langCmd != null) {
+            langCmd.setExecutor(langCommand);
+            langCmd.setTabCompleter(langCommand);
+        } else {
+            logger.warning("[Registry] Command /lang not found in plugin.yml!");
+        }
 
-        logger.info("[Registry] Commands registered via CommandService");
+        var afterLangCmd = plugin.getCommand("afterlang");
+        if (afterLangCmd != null) {
+            afterLangCmd.setExecutor(afterLangCommand);
+            afterLangCmd.setTabCompleter(afterLangCommand);
+        } else {
+            logger.warning("[Registry] Command /afterlang not found in plugin.yml!");
+        }
+
+        logger.info("[Registry] Commands registered");
     }
 
     /**

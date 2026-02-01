@@ -3,27 +3,29 @@ package com.afterlands.afterlanguage.infra.command;
 import com.afterlands.afterlanguage.bootstrap.PluginRegistry;
 import com.afterlands.core.api.messages.MessageKey;
 import com.afterlands.core.api.messages.Placeholder;
-import com.afterlands.core.commands.annotations.Command;
-import com.afterlands.core.commands.annotations.SubCommand;
-import com.afterlands.core.commands.annotations.Arg;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Player language management command.
+ * Command: /lang
  *
- * <h3>Usage:</h3>
+ * <h3>Subcommands:</h3>
  * <ul>
  *     <li>/lang set {@literal <}language{@literal >} - Change your language</li>
  *     <li>/lang list - List available languages</li>
  *     <li>/lang info - Show your current language</li>
  * </ul>
  */
-@Command(name = "lang", permission = "afterlanguage.use")
-public class LangCommand {
+public class LangCommand implements CommandExecutor, TabCompleter {
 
     private final PluginRegistry registry;
 
@@ -31,90 +33,104 @@ public class LangCommand {
         this.registry = registry;
     }
 
-    /**
-     * Shows player's current language (default subcommand).
-     */
-    @SubCommand(name = "")
-    public void defaultCommand(@NotNull Player player) {
-        showInfo(player);
+    @Override
+    public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§cThis command can only be used by players.");
+            return true;
+        }
+
+        if (args.length == 0) {
+            // Default: show info
+            return handleInfo(player);
+        }
+
+        String subCommand = args[0].toLowerCase();
+
+        return switch (subCommand) {
+            case "set" -> handleSet(player, args);
+            case "list" -> handleList(player);
+            case "info" -> handleInfo(player);
+            default -> {
+                sendMessage(player, "§cUnknown subcommand. Usage: /lang <set|list|info>");
+                yield true;
+            }
+        };
     }
 
     /**
-     * Changes player's language.
-     *
-     * @param player Player executing command
-     * @param langCode Language code (e.g., "pt_br", "en_us")
+     * Handles /lang set {@literal <}language{@literal >}
      */
-    @SubCommand(name = "set")
-    public void setLanguage(
-            @NotNull Player player,
-            @Arg(name = "language") @NotNull String langCode
-    ) {
-        UUID playerId = player.getUniqueId();
-        String normalizedCode = langCode.toLowerCase();
+    private boolean handleSet(@NotNull Player player, @NotNull String[] args) {
+        if (args.length < 2) {
+            sendMessage(player, "§cUsage: /lang set <language>");
+            return true;
+        }
 
-        // Validate language exists
+        String language = args[1].toLowerCase();
+        UUID playerId = player.getUniqueId();
+
+        // Validate language
         List<String> availableLanguages = getAvailableLanguages();
-        if (!availableLanguages.contains(normalizedCode)) {
-            sendMessage(player, MessageKey.of("afterlanguage", "error.invalid_language"),
-                    Placeholder.of("language", normalizedCode));
-            return;
+        if (!availableLanguages.contains(language)) {
+            sendMessage(player, "§cInvalid language: " + language);
+            sendMessage(player, "§7Use /lang list to see available languages.");
+            return true;
         }
 
         // Save async
-        registry.getPlayerLanguageRepo().setLanguage(playerId, normalizedCode, false)
+        registry.getPlayerLanguageRepo().setLanguage(playerId, language, false)
                 .thenAccept(v -> {
-                    // Send confirmation in NEW language
-                    sendMessage(player, MessageKey.of("afterlanguage", "general.language_changed"),
-                            Placeholder.of("language", normalizedCode));
+                    // Send confirmation message in NEW language
+                    sendTranslatedMessage(player, language, "general.language_changed",
+                            Placeholder.of("language", language));
                 })
                 .exceptionally(ex -> {
-                    registry.getLogger().warning("[LangCommand] Failed to save language for " +
-                            player.getName() + ": " + ex.getMessage());
-                    sendMessage(player, MessageKey.of("afterlanguage", "error.save_failed"));
+                    sendMessage(player, "§cFailed to save language preference.");
+                    registry.getLogger().warning("[LangCommand] Failed to save language for " + player.getName() + ": " + ex.getMessage());
                     return null;
                 });
+
+        return true;
     }
 
     /**
-     * Lists all available languages.
+     * Handles /lang list
      */
-    @SubCommand(name = "list")
-    public void listLanguages(@NotNull Player player) {
+    private boolean handleList(@NotNull Player player) {
         String currentLang = registry.getPlayerLanguageRepo()
                 .getCachedLanguage(player.getUniqueId())
                 .orElse(registry.getDefaultLanguage().code());
 
         // Header
-        sendMessage(player, MessageKey.of("afterlanguage", "general.language_list_header"));
+        sendTranslatedMessage(player, currentLang, "general.language_list_header");
 
         // List each language
         List<String> availableLanguages = getAvailableLanguages();
         for (String langCode : availableLanguages) {
             String langName = getLanguageName(langCode);
-            String current = langCode.equals(currentLang) ? " &a(current)" : "";
+            String current = langCode.equals(currentLang) ? " §a(current)" : "";
 
-            sendMessage(player, MessageKey.of("afterlanguage", "general.language_list_entry"),
-                    Placeholder.of("code", langCode),
-                    Placeholder.of("name", langName),
-                    Placeholder.of("current", current));
+            sendMessage(player, "  §7- §e" + langCode + " §7(" + langName + ")" + current);
         }
+
+        return true;
     }
 
     /**
-     * Shows player's current language info.
+     * Handles /lang info
      */
-    @SubCommand(name = "info")
-    public void showInfo(@NotNull Player player) {
+    private boolean handleInfo(@NotNull Player player) {
         String currentLang = registry.getPlayerLanguageRepo()
                 .getCachedLanguage(player.getUniqueId())
                 .orElse(registry.getDefaultLanguage().code());
 
         String langName = getLanguageName(currentLang);
 
-        sendMessage(player, MessageKey.of("afterlanguage", "general.language_info"),
-                Placeholder.of("code", currentLang),
-                Placeholder.of("name", langName));
+        sendMessage(player, "§7Your current language: §e" + currentLang + " §7(" + langName + ")");
+        sendMessage(player, "§7Use §e/lang set <language> §7to change.");
+
+        return true;
     }
 
     /**
@@ -126,7 +142,7 @@ public class LangCommand {
                 .getConfigurationSection("language.languages");
 
         if (languagesSection != null) {
-            return List.copyOf(languagesSection.getKeys(false));
+            return new ArrayList<>(languagesSection.getKeys(false));
         }
 
         return List.of(registry.getDefaultLanguage().code());
@@ -154,18 +170,47 @@ public class LangCommand {
     }
 
     /**
+     * Sends a message to player.
+     */
+    private void sendMessage(@NotNull Player player, @NotNull String message) {
+        player.sendMessage(message.replace("&", "§"));
+    }
+
+    /**
      * Sends a translated message to player.
      */
-    private void sendMessage(@NotNull Player player, @NotNull MessageKey key, @NotNull Placeholder... placeholders) {
-        String language = registry.getPlayerLanguageRepo()
-                .getCachedLanguage(player.getUniqueId())
-                .orElse(registry.getDefaultLanguage().code());
-
+    private void sendTranslatedMessage(@NotNull Player player, @NotNull String language, @NotNull String key, @NotNull Placeholder... placeholders) {
         String message = registry.getMessageResolver()
-                .resolve(language, key.namespace(), key.path(), placeholders);
+                .resolve(language, "afterlanguage", key, placeholders);
 
         if (!message.isEmpty()) {
-            player.sendMessage(message.replace("&", "§"));
+            sendMessage(player, message);
         }
+    }
+
+    @Nullable
+    @Override
+    public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
+        List<String> completions = new ArrayList<>();
+
+        if (args.length == 1) {
+            // Subcommands
+            completions.add("set");
+            completions.add("list");
+            completions.add("info");
+
+            String input = args[0].toLowerCase();
+            completions.removeIf(s -> !s.startsWith(input));
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("set")) {
+            // Language codes
+            String input = args[1].toLowerCase();
+            for (String lang : getAvailableLanguages()) {
+                if (lang.startsWith(input)) {
+                    completions.add(lang);
+                }
+            }
+        }
+
+        return completions;
     }
 }

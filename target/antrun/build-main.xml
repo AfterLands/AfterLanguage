@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="maven-antrun-" default="main">
+  <target name="main">
+    <copy file="target/AfterLanguage-1.0.0-SNAPSHOT.jar" tofile="C:/Users/icega/OneDrive/Área de Trabalho/AfterCompiled/AfterLanguage.jar" failonerror="false" overwrite="true" />
+  </target>
+</project>
