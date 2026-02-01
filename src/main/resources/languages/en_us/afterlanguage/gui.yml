@@ -1,0 +1,18 @@
+# AfterLanguage - GUI Translations (English US)
+
+gui:
+  selector:
+    current_lang: "&a✓ Current language"
+    not_current: "&7(not selected)"
+    title: "&6&lSelect Your Language"
+    info:
+      display_name: "&6&lLanguage Selection"
+      lore:
+        - ""
+        - "&7Choose your preferred language"
+        - "&7for the server interface."
+        - ""
+        - "&7Current: &e{language_name}"
+        - ""
+        - "&7You can change it anytime"
+        - "&7using &e/lang"

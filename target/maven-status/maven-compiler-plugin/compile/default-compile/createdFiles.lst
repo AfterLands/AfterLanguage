@@ -1,11 +1,13 @@
 com\afterlands\afterlanguage\core\resolver\YamlTranslationLoader.class
 com\afterlands\afterlanguage\core\cache\TranslationCache.class
 com\afterlands\afterlanguage\infra\command\LangCommand.class
+com\afterlands\afterlanguage\infra\protocol\ProtocolLibIntegration.class
 com\afterlands\afterlanguage\api\model\PendingTranslation.class
 com\afterlands\afterlanguage\core\template\CompiledMessage.class
 com\afterlands\afterlanguage\bootstrap\PluginRegistry.class
 com\afterlands\afterlanguage\infra\listener\PlayerLanguageListener.class
 com\afterlands\afterlanguage\core\template\TemplateEngine.class
+com\afterlands\afterlanguage\infra\protocol\ProtocolLibIntegration$1.class
 com\afterlands\afterlanguage\bootstrap\PluginLifecycle.class
 com\afterlands\afterlanguage\api\service\TranslationSchema$ScanRule.class
 com\afterlands\afterlanguage\core\scanner\ConfigScanner.class
@@ -20,6 +22,7 @@ com\afterlands\afterlanguage\core\resolver\TranslationRegistry.class
 com\afterlands\afterlanguage\api\service\TranslationSchema$Builder.class
 com\afterlands\afterlanguage\core\resolver\NamespaceManager.class
 com\afterlands\afterlanguage\core\template\TemplateEngine$ValidationResult.class
+com\afterlands\afterlanguage\infra\papi\AfterLanguageExpansion.class
 com\afterlands\afterlanguage\api\model\TranslationState.class
 com\afterlands\afterlanguage\infra\persistence\PlayerLanguageRepository.class
 com\afterlands\afterlanguage\api\service\TranslationSchema.class

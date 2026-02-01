@@ -1,8 +1,13 @@
 package com.afterlands.afterlanguage.infra.command;
 
 import com.afterlands.afterlanguage.bootstrap.PluginRegistry;
+import com.afterlands.core.actions.ActionService;
+import com.afterlands.core.actions.ActionSpec;
+import com.afterlands.core.api.AfterCoreAPI;
 import com.afterlands.core.api.messages.MessageKey;
 import com.afterlands.core.api.messages.Placeholder;
+import com.afterlands.core.inventory.InventoryContext;
+import com.afterlands.core.inventory.InventoryService;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -12,7 +17,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -20,6 +27,8 @@ import java.util.UUID;
  *
  * <h3>Subcommands:</h3>
  * <ul>
+ *     <li>/lang - Opens GUI language selector (default)</li>
+ *     <li>/lang gui - Opens GUI language selector</li>
  *     <li>/lang set {@literal <}language{@literal >} - Change your language</li>
  *     <li>/lang list - List available languages</li>
  *     <li>/lang info - Show your current language</li>
@@ -41,21 +50,75 @@ public class LangCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 0) {
-            // Default: show info
-            return handleInfo(player);
+            // Default: open GUI
+            return handleGui(player);
         }
 
         String subCommand = args[0].toLowerCase();
 
         return switch (subCommand) {
+            case "gui" -> handleGui(player);
             case "set" -> handleSet(player, args);
             case "list" -> handleList(player);
             case "info" -> handleInfo(player);
             default -> {
-                sendMessage(player, "§cUnknown subcommand. Usage: /lang <set|list|info>");
+                sendMessage(player, "§cUnknown subcommand. Usage: /lang <gui|set|list|info>");
                 yield true;
             }
         };
+    }
+
+    /**
+     * Handles /lang gui
+     */
+    private boolean handleGui(@NotNull Player player) {
+        try {
+            // Get AfterCore InventoryService
+            AfterCoreAPI afterCore = com.afterlands.core.api.AfterCore.get();
+            if (afterCore == null) {
+                sendMessage(player, "§cAfterCore not available.");
+                return true;
+            }
+
+            InventoryService inventoryService = afterCore.inventory();
+
+            // Get current language
+            String currentLang = registry.getPlayerLanguageRepo()
+                    .getCachedLanguage(player.getUniqueId())
+                    .orElse(registry.getDefaultLanguage().code());
+
+            String currentLangName = getLanguageName(currentLang);
+
+            // Build context with dynamic placeholders
+            Map<String, String> placeholders = new HashMap<>();
+            placeholders.put("current_language_name", currentLangName);
+            placeholders.put("translation_percent", "100"); // TODO: Calculate actual percentage
+
+            // Language-specific glow and indicators
+            placeholders.put("is_current_pt_br", currentLang.equals("pt_br") ? "true" : "false");
+            placeholders.put("is_current_en_us", currentLang.equals("en_us") ? "true" : "false");
+            placeholders.put("is_current_es_es", currentLang.equals("es_es") ? "true" : "false");
+
+            // Current language indicator
+            String indicator = registry.getMessageResolver()
+                    .resolve(currentLang, "afterlanguage", "gui.selector.current_lang");
+            placeholders.put("current_lang_indicator", indicator);
+
+            // Create context with player ID and inventory ID
+            InventoryContext context = new InventoryContext(player.getUniqueId(), "language_selector")
+                    .withPlaceholders(placeholders);
+
+            // Open inventory using inventory ID directly
+            inventoryService.openInventory(player, "language_selector", context);
+
+        } catch (Exception e) {
+            sendMessage(player, "§cFailed to open language selector.");
+            registry.getLogger().warning("[LangCommand] Failed to open GUI for " +
+                    player.getName() + ": " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        return true;
     }
 
     /**
@@ -67,23 +130,31 @@ public class LangCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        String language = args[1].toLowerCase();
+        String newLanguage = args[1].toLowerCase();
         UUID playerId = player.getUniqueId();
 
         // Validate language
         List<String> availableLanguages = getAvailableLanguages();
-        if (!availableLanguages.contains(language)) {
-            sendMessage(player, "§cInvalid language: " + language);
+        if (!availableLanguages.contains(newLanguage)) {
+            sendMessage(player, "§cInvalid language: " + newLanguage);
             sendMessage(player, "§7Use /lang list to see available languages.");
             return true;
         }
 
+        // Get old language
+        String oldLanguage = registry.getPlayerLanguageRepo()
+                .getCachedLanguage(playerId)
+                .orElse(registry.getDefaultLanguage().code());
+
         // Save async
-        registry.getPlayerLanguageRepo().setLanguage(playerId, language, false)
+        registry.getPlayerLanguageRepo().setLanguage(playerId, newLanguage, false)
                 .thenAccept(v -> {
                     // Send confirmation message in NEW language
-                    sendTranslatedMessage(player, language, "general.language_changed",
-                            Placeholder.of("language", language));
+                    sendTranslatedMessage(player, newLanguage, "general.language_changed",
+                            Placeholder.of("language", newLanguage));
+
+                    // Execute language-change actions if configured
+                    executeLanguageChangeActions(player, oldLanguage, newLanguage);
                 })
                 .exceptionally(ex -> {
                     sendMessage(player, "§cFailed to save language preference.");
@@ -188,6 +259,74 @@ public class LangCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    /**
+     * Executes language-change actions from config.
+     *
+     * @param player Player
+     * @param oldLang Old language
+     * @param newLang New language
+     */
+    private void executeLanguageChangeActions(@NotNull Player player, @NotNull String oldLang, @NotNull String newLang) {
+        try {
+            // Get ActionService from AfterCore
+            AfterCoreAPI afterCore = com.afterlands.core.api.AfterCore.get();
+            if (afterCore == null) {
+                return;
+            }
+
+            ActionService actionService = afterCore.actions();
+            org.bukkit.configuration.file.FileConfiguration config = registry.getPlugin().getConfig();
+
+            // Execute "any" actions
+            List<String> anyActions = config.getStringList("actions.language-change.any");
+            executeActions(actionService, player, anyActions, oldLang, newLang);
+
+            // Execute language-specific actions
+            List<String> langActions = config.getStringList("actions.language-change." + newLang);
+            executeActions(actionService, player, langActions, oldLang, newLang);
+
+        } catch (Exception e) {
+            registry.getLogger().warning("[LangCommand] Failed to execute language-change actions: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Executes a list of actions.
+     */
+    private void executeActions(
+            @NotNull ActionService actionService,
+            @NotNull Player player,
+            @NotNull List<String> actions,
+            @NotNull String oldLang,
+            @NotNull String newLang
+    ) {
+        if (actions.isEmpty()) {
+            return;
+        }
+
+        AfterCoreAPI afterCore = com.afterlands.core.api.AfterCore.get();
+        if (afterCore == null) {
+            return;
+        }
+
+        String languageName = getLanguageName(newLang);
+
+        for (String action : actions) {
+            String processed = action
+                    .replace("{old_language}", oldLang)
+                    .replace("{new_language}", newLang)
+                    .replace("{language_name}", languageName);
+
+            try {
+                // Parse and execute action
+                ActionSpec spec = actionService.parse(processed);
+                afterCore.executeAction(spec, player);
+            } catch (Exception e) {
+                registry.getLogger().warning("[LangCommand] Failed to execute action: " + e.getMessage());
+            }
+        }
+    }
+
     @Nullable
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
@@ -195,6 +334,7 @@ public class LangCommand implements CommandExecutor, TabCompleter {
 
         if (args.length == 1) {
             // Subcommands
+            completions.add("gui");
             completions.add("set");
             completions.add("list");
             completions.add("info");

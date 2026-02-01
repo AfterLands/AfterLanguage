@@ -1,0 +1,18 @@
+# AfterLanguage - GUI Translations (Portuguese BR)
+
+gui:
+  selector:
+    current_lang: "&a✓ Idioma atual"
+    not_current: "&7(não selecionado)"
+    title: "&6&lSelecione seu Idioma"
+    info:
+      display_name: "&6&lSeleção de Idioma"
+      lore:
+        - ""
+        - "&7Escolha seu idioma preferido"
+        - "&7para a interface do servidor."
+        - ""
+        - "&7Atual: &e{language_name}"
+        - ""
+        - "&7Você pode mudar a qualquer"
+        - "&7momento usando &e/lang"

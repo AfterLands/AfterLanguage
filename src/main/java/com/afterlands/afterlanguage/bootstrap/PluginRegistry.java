@@ -11,8 +11,10 @@ import com.afterlands.afterlanguage.core.template.TemplateEngine;
 import com.afterlands.afterlanguage.infra.command.AfterLangCommand;
 import com.afterlands.afterlanguage.infra.command.LangCommand;
 import com.afterlands.afterlanguage.infra.listener.PlayerLanguageListener;
+import com.afterlands.afterlanguage.infra.papi.AfterLanguageExpansion;
 import com.afterlands.afterlanguage.infra.persistence.DynamicTranslationRepository;
 import com.afterlands.afterlanguage.infra.persistence.PlayerLanguageRepository;
+import com.afterlands.afterlanguage.infra.protocol.ProtocolLibIntegration;
 import com.afterlands.afterlanguage.infra.service.MessageServiceImpl;
 import com.afterlands.core.api.AfterCore;
 import com.afterlands.core.api.AfterCoreAPI;
@@ -88,6 +90,10 @@ public class PluginRegistry {
     // Commands
     private LangCommand langCommand;
     private AfterLangCommand afterLangCommand;
+
+    // Integrations
+    private ProtocolLibIntegration protocolLibIntegration;
+    private AfterLanguageExpansion placeholderExpansion;
 
     public PluginRegistry(@NotNull AfterLanguagePlugin plugin) {
         this.plugin = plugin;
@@ -220,6 +226,25 @@ public class PluginRegistry {
             this.playerLanguageListener = new PlayerLanguageListener(
                     playerLanguageRepo,
                     defaultLanguage.code(),
+                    plugin.getConfig(),
+                    afterCore,
+                    logger,
+                    debug
+            );
+
+            // 12. Create integrations
+            this.protocolLibIntegration = new ProtocolLibIntegration(
+                    plugin,
+                    playerLanguageRepo,
+                    logger,
+                    debug
+            );
+
+            this.placeholderExpansion = new AfterLanguageExpansion(
+                    plugin,
+                    playerLanguageRepo,
+                    messageResolver,
+                    defaultLanguage,
                     logger,
                     debug
             );
@@ -384,10 +409,43 @@ public class PluginRegistry {
     }
 
     /**
+     * Enables integrations.
+     */
+    public void enableIntegrations() {
+        // Enable ProtocolLib integration
+        if (protocolLibIntegration != null) {
+            protocolLibIntegration.enable();
+        }
+
+        // Register PlaceholderAPI expansion
+        if (placeholderExpansion != null && Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
+            try {
+                placeholderExpansion.register();
+                logger.info("[Registry] PlaceholderAPI expansion registered");
+            } catch (Exception e) {
+                logger.warning("[Registry] Failed to register PlaceholderAPI expansion: " + e.getMessage());
+            }
+        }
+    }
+
+    /**
      * Graceful shutdown of all services.
      */
     public void shutdown() {
         logger.info("[Registry] Shutting down services...");
+
+        // Disable integrations
+        if (protocolLibIntegration != null) {
+            protocolLibIntegration.disable();
+        }
+
+        if (placeholderExpansion != null) {
+            try {
+                placeholderExpansion.unregister();
+            } catch (Exception e) {
+                // Ignore unregister errors
+            }
+        }
 
         // Clear caches
         if (cache != null) {

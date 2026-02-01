@@ -60,6 +60,9 @@ public class PluginLifecycle {
         // 5. Register commands
         registry.registerCommands();
 
+        // 6. Enable integrations (ProtocolLib, PlaceholderAPI)
+        registry.enableIntegrations();
+
         logger.info("[Lifecycle] Startup complete!");
     }
 

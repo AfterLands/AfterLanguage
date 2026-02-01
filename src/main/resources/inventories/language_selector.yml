@@ -1,0 +1,123 @@
+# AfterLanguage - Language Selector GUI
+# Version: 1.1.0
+
+title: "&6&lSelect Your Language"
+size: 27
+pagination:
+  enabled: false
+
+items:
+  # Portuguese (Brazil)
+  pt_br:
+    slot: 10
+    material: BANNER
+    data: 10  # Green banner
+    display-name: "&a&lPortuguês (Brasil)"
+    lore:
+      - ""
+      - "&7Idioma padrão do servidor"
+      - "&7{translation_percent}% traduzido"
+      - ""
+      - "{current_lang_indicator}"
+      - ""
+      - "&eClique para selecionar"
+    glow: "{is_current_pt_br}"
+    view-conditions: "true"
+    on_click:
+      - "[player_command] lang set pt_br"
+      - "[close_panel]"
+
+  # English (US)
+  en_us:
+    slot: 12
+    material: BANNER
+    data: 15  # Black banner (represents US flag)
+    display-name: "&b&lEnglish (US)"
+    lore:
+      - ""
+      - "&7English language"
+      - "&7{translation_percent}% translated"
+      - ""
+      - "{current_lang_indicator}"
+      - ""
+      - "&eClick to select"
+    glow: "{is_current_en_us}"
+    on_click:
+      - "[player_command] lang set en_us"
+      - "[close_panel]"
+
+  # Spanish
+  es_es:
+    slot: 14
+    material: BANNER
+    data: 14  # Red banner (represents Spanish flag)
+    display-name: "&c&lEspañol (España)"
+    lore:
+      - ""
+      - "&7Idioma español"
+      - "&7{translation_percent}% traducido"
+      - ""
+      - "{current_lang_indicator}"
+      - ""
+      - "&eHaz clic para seleccionar"
+    glow: "{is_current_es_es}"
+    on_click:
+      - "[player_command] lang set es_es"
+      - "[close_panel]"
+
+  # Decorative glass panes
+  decoration_1:
+    slot: 0
+    material: STAINED_GLASS_PANE
+    data: 7  # Light gray
+    display-name: " "
+
+  decoration_2:
+    slot: 1
+    material: STAINED_GLASS_PANE
+    data: 7
+    display-name: " "
+
+  decoration_3:
+    slot: 9
+    material: STAINED_GLASS_PANE
+    data: 7
+    display-name: " "
+
+  decoration_4:
+    slot: 17
+    material: STAINED_GLASS_PANE
+    data: 7
+    display-name: " "
+
+  decoration_5:
+    slot: 18
+    material: STAINED_GLASS_PANE
+    data: 7
+    display-name: " "
+
+  # Info item
+  info:
+    slot: 4
+    material: BOOK
+    display-name: "&6&lLanguage Selection"
+    lore:
+      - ""
+      - "&7Choose your preferred language"
+      - "&7for the server interface."
+      - ""
+      - "&7Current: &e{current_language_name}"
+      - ""
+      - "&7You can change it anytime"
+      - "&7using &e/lang"
+
+  # Close button
+  close:
+    slot: 26
+    material: BARRIER
+    display-name: "&cClose"
+    lore:
+      - ""
+      - "&7Click to close this menu"
+    on_click:
+      - "[close_panel]"
