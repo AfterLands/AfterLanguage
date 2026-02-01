@@ -1,0 +1,161 @@
+# AfterLanguage Configuration
+# Version: 1.0.0
+
+# Configuration version (DO NOT MODIFY)
+config-version: 1
+
+# Default language (source language for Crowdin)
+default-language: pt_br
+
+# Enabled languages
+enabled-languages:
+  - pt_br
+  - en_us
+  - es_es
+
+# Language display names
+language-names:
+  pt_br: "Português (BR)"
+  en_us: "English (US)"
+  es_es: "Español (ES)"
+
+# Auto-detection settings
+detection:
+  # Auto-detect player locale on join via ProtocolLib
+  auto-detect: true
+
+  # Delay before detecting (ticks, 20 = 1 second)
+  delay-ticks: 60
+
+  # Locale mapping (client locale -> server language)
+  locale-mapping:
+    en_gb: en_us
+    en_au: en_us
+    en_ca: en_us
+    pt_pt: pt_br
+    es_ar: es_es
+    es_mx: es_es
+    es_cl: es_es
+
+# Fallback behavior when translation is missing
+fallback:
+  # Show key literal when translation missing
+  show-key-on-missing: true
+
+  # Format for missing translations
+  missing-format: "&c[Missing: {namespace}:{key}]"
+
+  # Log missing keys to console
+  log-missing-keys: true
+
+  # Log level for missing keys (INFO, WARNING, SEVERE)
+  log-level: WARNING
+
+# Storage settings
+storage:
+  # Table name prefix
+  table-prefix: afterlanguage_
+
+  # Use AfterCore's database connection
+  use-aftercore-connection: true
+
+# Cache settings
+cache:
+  # Maximum translations in L1 hot cache
+  max-translations: 10000
+
+  # TTL for parsed messages (minutes)
+  parsed-message-ttl-minutes: 5
+
+  # TTL for compiled templates (minutes)
+  compiled-template-ttl-minutes: 60
+
+  # Enable cache statistics logging
+  log-stats: false
+
+  # Cache stats log interval (minutes)
+  stats-interval-minutes: 30
+
+# Crowdin integration
+crowdin:
+  # Enable Crowdin sync
+  enabled: false
+
+  # Path to crowdin.yml configuration
+  config-file: crowdin.yml
+
+  # Auto-sync interval (minutes, 0 = disabled)
+  auto-sync-interval-minutes: 30
+
+  # Webhook settings
+  webhook:
+    # Enable webhook endpoint
+    enabled: false
+
+    # Port for webhook server
+    port: 8432
+
+    # Secret key for webhook authentication
+    secret: "change-me-in-production"
+
+  # Hot reload after sync
+  hot-reload: true
+
+  # Notify admins when sync completes
+  notify-admins: true
+
+  # Only download approved translations
+  approved-only: true
+
+# Redis sync (for multi-server setups)
+redis:
+  # Enable Redis sync
+  enabled: false
+
+  # Redis channel for sync events
+  channel: afterlanguage:sync
+
+  # Sync events to broadcast
+  events:
+    language-change: true
+    reload-namespace: true
+    crowdin-sync: true
+
+# PlaceholderAPI integration
+placeholderapi:
+  # Enable PlaceholderAPI expansion
+  enabled: true
+
+# Actions executed on language events
+actions:
+  # Actions on first join (before language is set)
+  first-join:
+    - "[title] &6Bem-vindo!;&eEscolha seu idioma com /lang;10;40;20"
+    - "[sound] LEVEL_UP 1.0 0.5"
+
+  # Actions when player changes language
+  language-change:
+    # Always executed
+    any:
+      - "[sound] NOTE_PLING 1.0 1.2"
+
+    # Language-specific actions
+    pt_br:
+      - "[message] &aIdioma definido para &fPortuguês&a!"
+
+    en_us:
+      - "[message] &aLanguage set to &fEnglish&a!"
+
+    es_es:
+      - "[message] &a¡Idioma configurado en &fEspañol&a!"
+
+# Performance settings
+performance:
+  # Pre-compile templates on startup
+  precompile-templates: true
+
+  # Use Adventure API when available (1.16+)
+  use-adventure-when-available: false
+
+# Debug mode
+debug: false

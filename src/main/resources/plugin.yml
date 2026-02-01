@@ -1,0 +1,72 @@
+name: AfterLanguage
+version: ${project.version}
+main: com.afterlands.afterlanguage.AfterLanguagePlugin
+api-version: 1.13
+description: Enterprise-grade i18n plugin for AfterLands ecosystem
+author: AfterLands Team
+website: https://afterlands.com
+
+# Hard dependencies
+depend:
+  - AfterCore
+
+# Soft dependencies
+softdepend:
+  - PlaceholderAPI
+  - ProtocolLib
+
+# Load order: POSTWORLD (after AfterCore)
+load: POSTWORLD
+
+commands:
+  lang:
+    description: Change your language preference
+    usage: /<command> [language]
+    permission: afterlanguage.use
+    aliases: [language, idioma]
+
+  afterlang:
+    description: Admin commands for translation management
+    usage: /<command> <subcommand>
+    permission: afterlanguage.admin
+    aliases: [al, alang]
+
+permissions:
+  afterlanguage.use:
+    description: Allows using /lang command
+    default: true
+
+  afterlanguage.admin:
+    description: Full admin access to translation system
+    default: op
+    children:
+      afterlanguage.set: true
+      afterlanguage.reload: true
+      afterlanguage.sync: true
+      afterlanguage.translate: true
+      afterlanguage.editor: true
+      afterlanguage.scan: true
+
+  afterlanguage.set:
+    description: Allows setting other players' language
+    default: op
+
+  afterlanguage.reload:
+    description: Allows reloading translations
+    default: op
+
+  afterlanguage.sync:
+    description: Allows triggering Crowdin sync
+    default: op
+
+  afterlanguage.translate:
+    description: Allows manual translation management
+    default: op
+
+  afterlanguage.editor:
+    description: Allows accessing translation editor GUI
+    default: op
+
+  afterlanguage.scan:
+    description: Allows scanning configs for translatable content
+    default: op
