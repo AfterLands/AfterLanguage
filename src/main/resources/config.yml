@@ -1,5 +1,5 @@
 # AfterLanguage Configuration
-# Version: 1.0.0
+# Version: 1.3.0
 
 # Configuration version (DO NOT MODIFY)
 config-version: 1
@@ -81,6 +81,32 @@ crowdin:
   # Enable Crowdin sync
   enabled: false
 
+  # Server identifier for Crowdin directory isolation.
+  # Each server in the network MUST have a unique server-id.
+  # This maps to a top-level Crowdin directory for server-specific namespaces.
+  # Leave empty to place all namespaces at root level (no isolation).
+  # Examples: "survival", "tutorial", "testes", "lobby"
+  server-id: ""
+
+  # Override directory grouping per namespace.
+  # If not listed here, namespace uses server-id directory.
+  # Values:
+  #   ""           = root level (globally shared, all servers see it)
+  #   "group-name" = shared group directory (shared with any server using same group)
+  #
+  # Crowdin structure produced by this config (example for server-id: "tutorial"):
+  #   /afterlanguage/afterlanguage.yml           ← "" = root (global)
+  #   /aftercore/aftercore.yml                   ← "" = root (global)
+  #   /quests-pve/afterquests/afterquests.yml    ← "quests-pve" = shared group
+  #   /tutorial/aftertutorial/aftertutorial.yml  ← server-id (default)
+  #
+  # Example (tutorial server):
+  #   namespace-directories:
+  #     afterlanguage: ""           # global (root) - shared by all servers
+  #     afterquests: "quests-pve"   # shared group with other PvE servers
+  #     # other namespaces use server-id directory (/tutorial/{namespace}/)
+  namespace-directories: {}
+
   # Path to crowdin.yml configuration
   config-file: crowdin.yml
 
@@ -107,6 +133,25 @@ crowdin:
   # Only download approved translations
   approved-only: true
 
+  # Conflict resolution strategy when local and Crowdin differ
+  # Options: crowdin-wins, local-wins, manual
+  conflict-resolution: crowdin-wins
+
+  # Create backup before sync (recommended)
+  backup-before-sync: true
+
+  # Upload local translations for non-source languages during sync/upload
+  # Default: false (use /afterlang crowdin uploadtranslation for manual upload)
+  upload-translations: false
+
+# Backup settings (v1.2.0)
+backup:
+  # Enable backups
+  enabled: true
+
+  # Maximum number of backups to keep
+  max-backups: 10
+
 # Redis sync (for multi-server setups)
 redis:
   # Enable Redis sync
@@ -123,31 +168,34 @@ redis:
 
 # PlaceholderAPI integration
 placeholderapi:
-  # Enable PlaceholderAPI expansion
+  # Enable PlaceholderAPI expansion (%afterlang_...%)
   enabled: true
+  # Process %placeholder% from other PAPI expansions inside translation messages
+  # e.g. a message like "Hello %player_name%" will resolve %player_name% via PAPI
+  process-in-messages: true
 
 # Actions executed on language events
 actions:
   # Actions on first join (before language is set)
   first-join:
-    - "[title] &6Bem-vindo!;&eEscolha seu idioma com /lang;10;40;20"
-    - "[sound] LEVEL_UP 1.0 0.5"
+    - "title: &6Bem-vindo!;&eEscolha seu idioma com /lang;10;40;20"
+    - "sound: LEVEL_UP;1.0;0.5"
 
   # Actions when player changes language
   language-change:
     # Always executed
     any:
-      - "[sound] NOTE_PLING 1.0 1.2"
+      - "sound: NOTE_PLING;1.0;1.2"
 
     # Language-specific actions
     pt_br:
-      - "[message] &aIdioma definido para &fPortuguês&a!"
+      - "message: &aIdioma definido para &fPortuguês&a!"
 
     en_us:
-      - "[message] &aLanguage set to &fEnglish&a!"
+      - "message: &aLanguage set to &fEnglish&a!"
 
     es_es:
-      - "[message] &a¡Idioma configurado en &fEspañol&a!"
+      - "message: &a¡Idioma configurado en &fEspañol&a!"
 
 # Performance settings
 performance:

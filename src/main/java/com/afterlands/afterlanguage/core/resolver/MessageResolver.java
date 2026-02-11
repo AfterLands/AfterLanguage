@@ -1,10 +1,13 @@
 package com.afterlands.afterlanguage.core.resolver;
 
+import com.afterlands.afterlanguage.api.model.Placeholder;
+import com.afterlands.afterlanguage.api.model.PluralCategory;
 import com.afterlands.afterlanguage.api.model.Translation;
 import com.afterlands.afterlanguage.core.cache.TranslationCache;
+import com.afterlands.afterlanguage.core.plural.LanguagePluralRulesRegistry;
+import com.afterlands.afterlanguage.core.plural.PluralRules;
 import com.afterlands.afterlanguage.core.template.CompiledMessage;
 import com.afterlands.afterlanguage.core.template.TemplateEngine;
-import com.afterlands.core.api.messages.Placeholder;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -36,6 +39,15 @@ import java.util.concurrent.ConcurrentHashMap;
  *     <li>L1 hit: &lt; 0.01ms</li>
  *     <li>L2 hit: &lt; 0.1ms</li>
  *     <li>Full resolution: &lt; 0.2ms</li>
+ * </ul>
+ *
+ * <h3>Pluralization (v1.2.0):</h3>
+ * <p>Uses {@link PluralRules} from {@link LanguagePluralRulesRegistry}
+ * to select the correct plural form based on count and language.</p>
+ * <ul>
+ *     <li>Supports ICU-like plural categories (ZERO, ONE, TWO, FEW, MANY, OTHER)</li>
+ *     <li>Language-specific rules (pt_br, en_us, es_es)</li>
+ *     <li>Automatic fallback to OTHER if category not defined</li>
  * </ul>
  */
 public class MessageResolver {
@@ -143,7 +155,21 @@ public class MessageResolver {
     }
 
     /**
-     * Resolves translation with pluralization support.
+     * Resolves translation with pluralization support (v1.2.0).
+     *
+     * <p>Uses ICU-like plural rules to select the correct category
+     * based on the count and language.</p>
+     *
+     * <h3>Example:</h3>
+     * <pre>{@code
+     * // With plural forms defined:
+     * // items.one: "1 item"
+     * // items.other: "{count} items"
+     *
+     * resolve("pt_br", "myplugin", "items", 1)    // Returns: "1 item"
+     * resolve("pt_br", "myplugin", "items", 5)    // Returns: "5 items"
+     * resolve("pt_br", "myplugin", "items", 0)    // Returns: "0 items"
+     * }</pre>
      *
      * @param language Player's language
      * @param namespace Namespace
@@ -175,7 +201,20 @@ public class MessageResolver {
 
         if (translation.isPresent()) {
             Translation t = translation.get();
-            String text = t.getText(count); // Gets plural form if available
+
+            // Get plural rules for the language
+            PluralRules rules = LanguagePluralRulesRegistry.getRules(language);
+
+            // Select the appropriate plural category
+            PluralCategory category = rules.select(count);
+
+            // Get text for the selected category (with fallback to OTHER)
+            String text = t.getTextForCategory(category);
+
+            if (debug) {
+                System.out.println("[MessageResolver] Plural resolution: " +
+                        "count=" + count + ", category=" + category + ", language=" + language);
+            }
 
             Map<String, Object> placeholderMap = Placeholder.toMap(withCount);
             return resolveWithPlaceholders(language, namespace, key, text, placeholderMap);

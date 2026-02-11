@@ -2,11 +2,16 @@ package com.afterlands.afterlanguage.bootstrap;
 
 import com.afterlands.afterlanguage.AfterLanguagePlugin;
 import com.afterlands.afterlanguage.api.model.Language;
+import com.afterlands.afterlanguage.api.service.DynamicContentAPI;
 import com.afterlands.afterlanguage.core.cache.TranslationCache;
+import com.afterlands.afterlanguage.core.io.TranslationBackupService;
+import com.afterlands.afterlanguage.core.io.TranslationExporter;
+import com.afterlands.afterlanguage.core.io.TranslationImporter;
 import com.afterlands.afterlanguage.core.resolver.MessageResolver;
 import com.afterlands.afterlanguage.core.resolver.NamespaceManager;
 import com.afterlands.afterlanguage.core.resolver.TranslationRegistry;
 import com.afterlands.afterlanguage.core.resolver.YamlTranslationLoader;
+import com.afterlands.afterlanguage.core.service.DynamicContentAPIImpl;
 import com.afterlands.afterlanguage.core.template.TemplateEngine;
 import com.afterlands.afterlanguage.infra.command.AfterLangCommand;
 import com.afterlands.afterlanguage.infra.command.LangCommand;
@@ -16,16 +21,22 @@ import com.afterlands.afterlanguage.infra.persistence.DynamicTranslationReposito
 import com.afterlands.afterlanguage.infra.persistence.PlayerLanguageRepository;
 import com.afterlands.afterlanguage.infra.protocol.ProtocolLibIntegration;
 import com.afterlands.afterlanguage.infra.service.MessageServiceImpl;
+import com.afterlands.afterlanguage.api.crowdin.CrowdinAPI;
+import com.afterlands.afterlanguage.core.crowdin.*;
+import com.afterlands.afterlanguage.infra.crowdin.*;
 import com.afterlands.core.api.AfterCore;
 import com.afterlands.core.api.AfterCoreAPI;
 import com.afterlands.core.config.MessageService;
 import com.afterlands.core.database.SqlDataSource;
 import org.bukkit.Bukkit;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.ServicesManager;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.File;
 import java.io.IOException;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -34,6 +45,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Dependency Injection container for AfterLanguage.
@@ -84,6 +96,14 @@ public class PluginRegistry {
     // Provider
     private MessageServiceImpl messageService;
 
+    // API
+    private DynamicContentAPIImpl dynamicContentAPI;
+
+    // Export/Import/Backup (v1.2.0)
+    private TranslationExporter exporter;
+    private TranslationImporter importer;
+    private TranslationBackupService backupService;
+
     // Listeners
     private PlayerLanguageListener playerLanguageListener;
 
@@ -94,6 +114,23 @@ public class PluginRegistry {
     // Integrations
     private ProtocolLibIntegration protocolLibIntegration;
     private AfterLanguageExpansion placeholderExpansion;
+
+    // Crowdin Integration (v1.3.0)
+    private boolean crowdinEnabled;
+    private CrowdinConfig crowdinConfig;
+    private CredentialManager crowdinCredentials;
+    private CrowdinClient crowdinClient;
+    private LocaleMapper localeMapper;
+    private UploadStrategy uploadStrategy;
+    private DownloadStrategy downloadStrategy;
+    private ConflictResolver conflictResolver;
+    private CrowdinSyncEngine crowdinSyncEngine;
+    private CrowdinScheduler crowdinScheduler;
+    private CrowdinWebhookServer crowdinWebhookServer;
+    private CrowdinEventListener crowdinEventListener;
+    private CrowdinCommand crowdinCommand;
+    private CrowdinAPIImpl crowdinAPI;
+    private RedisSyncBroadcaster redisSyncBroadcaster;
 
     public PluginRegistry(@NotNull AfterLanguagePlugin plugin) {
         this.plugin = plugin;
@@ -125,8 +162,8 @@ public class PluginRegistry {
             registerMigrations();
 
             // 4. Initialize default language
-            String defaultLangCode = plugin.getConfig().getString("language.default", "pt_br");
-            String defaultLangName = plugin.getConfig().getString("language.languages." + defaultLangCode + ".name", "Português (Brasil)");
+            String defaultLangCode = plugin.getConfig().getString("default-language", "pt_br");
+            String defaultLangName = plugin.getConfig().getString("language-names." + defaultLangCode, "Português (Brasil)");
             this.defaultLanguage = new Language(defaultLangCode, defaultLangName, true);
 
             logger.info("[Registry] Default language: " + defaultLanguage.name() + " [" + defaultLanguage.code() + "]");
@@ -179,7 +216,8 @@ public class PluginRegistry {
 
             // 8. Create file loading
             Path languagesDir = plugin.getDataFolder().toPath().resolve("languages");
-            if (!Files.exists(languagesDir)) {
+            boolean firstRun = !Files.exists(languagesDir);
+            if (firstRun) {
                 Files.createDirectories(languagesDir);
                 logger.info("[Registry] Created languages directory: " + languagesDir);
             }
@@ -198,33 +236,85 @@ public class PluginRegistry {
             logger.info("[Registry] File loading initialized (YamlTranslationLoader, NamespaceManager)");
 
             // 9. Register default namespace ("afterlanguage")
+            // Provision default resources from JAR only on first run
+            if (firstRun) {
+                provisionDefaultResources();
+                logger.info("[Registry] First run detected - provisioned default translation files");
+            }
+
             Path defaultNamespaceFolder = plugin.getDataFolder().toPath().resolve("languages")
                     .resolve(defaultLanguage.code()).resolve("afterlanguage");
 
             // Create example translation file if doesn't exist
             if (!Files.exists(defaultNamespaceFolder)) {
                 Files.createDirectories(defaultNamespaceFolder);
-                createExampleTranslations(defaultNamespaceFolder);
+                // createExampleTranslations(defaultNamespaceFolder); // No longer needed
             }
 
             namespaceManager.registerNamespace("afterlanguage", defaultNamespaceFolder).join();
             logger.info("[Registry] Registered namespace: afterlanguage");
 
+            // 9b. Discover and load any additional namespace folders on disk
+            namespaceManager.discoverAndRegisterNewNamespaces();
+            for (String ns : namespaceManager.getRegisteredNamespaces()) {
+                if (!"afterlanguage".equals(ns)) {
+                    namespaceManager.reloadNamespace(ns).join();
+                    logger.info("[Registry] Auto-registered namespace from disk: " + ns);
+                }
+            }
+
             // 10. Create MessageServiceImpl
+            boolean papiProcessMessages = plugin.getConfig().getBoolean("placeholderapi.process-in-messages", true);
             this.messageService = new MessageServiceImpl(
                     messageResolver,
                     playerLanguageRepo,
                     afterCore.metrics(),
                     defaultLanguage.code(),
                     logger,
-                    debug
+                    debug,
+                    papiProcessMessages
             );
 
             logger.info("[Registry] MessageServiceImpl created");
 
-            // 11. Create listeners
+            // 11. Create Export/Import/Backup services (v1.2.0)
+            this.exporter = new TranslationExporter(logger, debug);
+            this.importer = new TranslationImporter(dynamicTranslationRepo, logger, debug);
+
+            Path backupsDir = plugin.getDataFolder().toPath().resolve("backups");
+            boolean backupsEnabled = plugin.getConfig().getBoolean("backup.enabled", true);
+            int maxBackups = plugin.getConfig().getInt("backup.max-backups", 10);
+
+            this.backupService = new TranslationBackupService(
+                    backupsDir,
+                    exporter,
+                    importer,
+                    logger,
+                    backupsEnabled,
+                    maxBackups
+            );
+
+            logger.info("[Registry] Export/Import/Backup services created (backups: " +
+                       (backupsEnabled ? "enabled, max=" + maxBackups : "disabled") + ")");
+
+            // 12. Create DynamicContentAPI (v1.2.0)
+            this.dynamicContentAPI = new DynamicContentAPIImpl(
+                    dynamicTranslationRepo,
+                    registry,
+                    cache,
+                    logger,
+                    debug
+            );
+
+            logger.info("[Registry] DynamicContentAPI created");
+
+            // 13. Initialize Crowdin Integration (v1.3.0)
+            initializeCrowdin();
+
+            // 15. Create listeners
             this.playerLanguageListener = new PlayerLanguageListener(
                     playerLanguageRepo,
+                    registry,
                     defaultLanguage.code(),
                     plugin.getConfig(),
                     afterCore,
@@ -232,7 +322,7 @@ public class PluginRegistry {
                     debug
             );
 
-            // 12. Create integrations
+            // 16. Create integrations
             this.protocolLibIntegration = new ProtocolLibIntegration(
                     plugin,
                     playerLanguageRepo,
@@ -310,30 +400,364 @@ public class PluginRegistry {
             }
         });
 
+        // Migration 3: Add plural forms columns (v1.2.0)
+        afterCore.sql().registerMigration(datasourceName, "add_plural_forms_columns", conn -> {
+            String[] alterSqls = {
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_zero TEXT AFTER text".formatted(dynamicTable),
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_one TEXT AFTER plural_zero".formatted(dynamicTable),
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_two TEXT AFTER plural_one".formatted(dynamicTable),
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_few TEXT AFTER plural_two".formatted(dynamicTable),
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_many TEXT AFTER plural_few".formatted(dynamicTable),
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_other TEXT AFTER plural_many".formatted(dynamicTable)
+            };
+
+            try (var stmt = conn.createStatement()) {
+                for (String alterSql : alterSqls) {
+                    try {
+                        stmt.execute(alterSql);
+                    } catch (Exception e) {
+                        // Column might already exist, ignore
+                    }
+                }
+            }
+        });
+
+        // Migration 4: Add Crowdin tracking columns (v1.3.0)
+        afterCore.sql().registerMigration(datasourceName, "add_crowdin_columns_v130", conn -> {
+            String[] alterSqls = {
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS crowdin_string_id BIGINT AFTER updated_at".formatted(dynamicTable),
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS crowdin_hash VARCHAR(64) AFTER crowdin_string_id".formatted(dynamicTable),
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP NULL AFTER crowdin_hash".formatted(dynamicTable),
+                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS sync_status VARCHAR(16) DEFAULT 'pending' AFTER last_synced_at".formatted(dynamicTable)
+            };
+
+            try (var stmt = conn.createStatement()) {
+                for (String sql : alterSqls) {
+                    try {
+                        stmt.execute(sql);
+                    } catch (Exception e) {
+                        // Column might already exist, ignore
+                    }
+                }
+
+                // Add indices
+                try {
+                    stmt.execute("CREATE INDEX IF NOT EXISTS idx_crowdin_string_id ON %s(crowdin_string_id)".formatted(dynamicTable));
+                } catch (Exception ignored) {}
+                try {
+                    stmt.execute("CREATE INDEX IF NOT EXISTS idx_sync_status ON %s(sync_status)".formatted(dynamicTable));
+                } catch (Exception ignored) {}
+            }
+
+            logger.info("[Migration] Added Crowdin tracking columns (v1.3.0)");
+        });
+
+        // Migration 5: Create Crowdin sync log table (v1.3.0)
+        String syncLogTable = plugin.getConfig().getString("database.tables.crowdin-sync-log", "afterlanguage_crowdin_sync_log");
+        afterCore.sql().registerMigration(datasourceName, "create_crowdin_sync_log_v130", conn -> {
+            String sql = """
+                CREATE TABLE IF NOT EXISTS %s (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    sync_id VARCHAR(36) NOT NULL,
+                    operation VARCHAR(16) NOT NULL,
+                    namespace VARCHAR(64),
+                    language VARCHAR(10),
+                    strings_uploaded INT DEFAULT 0,
+                    strings_downloaded INT DEFAULT 0,
+                    strings_skipped INT DEFAULT 0,
+                    conflicts INT DEFAULT 0,
+                    errors TEXT,
+                    started_at TIMESTAMP NOT NULL,
+                    completed_at TIMESTAMP NULL,
+                    status VARCHAR(16) DEFAULT 'running',
+                    INDEX idx_sync_id (sync_id),
+                    INDEX idx_namespace (namespace),
+                    INDEX idx_status (status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """.formatted(syncLogTable);
+
+            try (var stmt = conn.createStatement()) {
+                stmt.execute(sql);
+            }
+
+            logger.info("[Migration] Created crowdin_sync_log table (v1.3.0)");
+        });
+
         logger.info("[Registry] Database migrations registered");
+    }
+
+    /**
+     * Provisions default resources from the JAR.
+     */
+    private void provisionDefaultResources() {
+        String[] resources = {
+            "languages/en_us/afterlanguage/gui.yml",
+            "languages/en_us/afterlanguage/messages.yml",
+            "languages/es_es/afterlanguage/gui.yml",
+            "languages/es_es/afterlanguage/messages.yml",
+            "languages/pt_br/afterlanguage/gui.yml",
+            "languages/pt_br/afterlanguage/messages.yml",
+            "languages/pt_br/afterlanguage/pluralization_example.yml"
+        };
+
+        for (String resourcePath : resources) {
+            File file = new File(plugin.getDataFolder(), resourcePath);
+            if (!file.exists()) {
+                plugin.saveResource(resourcePath, false);
+                // logger.info("[Registry] Provisioned default resource: " + resourcePath);
+            }
+        }
     }
 
     /**
      * Creates example translation files for testing.
      */
     private void createExampleTranslations(Path namespaceDir) throws IOException {
-        Path generalFile = namespaceDir.resolve("general.yml");
-        String exampleContent = """
-            # AfterLanguage - Example Translations
-            prefix: "&7[&6AfterLang&7]"
-            language_changed: "&aLanguage changed to: &f{language}"
-            language_list_header: "&7Available languages:"
-            language_list_entry: "&7- &e{code} &7({name})"
-            reload_success: "&aTranslations reloaded successfully!"
-            reload_failed: "&cFailed to reload translations."
-            stats_header: "&7=== AfterLanguage Stats ==="
-            stats_namespaces: "&7Registered namespaces: &e{count}"
-            stats_translations: "&7Total translations: &e{count}"
-            stats_players: "&7Players with custom language: &e{count}"
-            """;
+        // No longer creates hardcoded files, relies on provisionDefaultResources
+    }
 
-        Files.writeString(generalFile, exampleContent);
-        logger.info("[Registry] Created example translations at: " + generalFile);
+    /**
+     * Initializes Crowdin integration services (v1.3.0).
+     *
+     * <p>Only initializes if crowdin.enabled is true in config.yml.</p>
+     */
+    private void initializeCrowdin() {
+        this.crowdinEnabled = plugin.getConfig().getBoolean("crowdin.enabled", false);
+
+        if (!crowdinEnabled) {
+            logger.info("[Registry] Crowdin integration disabled");
+            return;
+        }
+
+        logger.info("[Registry] Initializing Crowdin integration...");
+
+        try {
+            // Load crowdin.yml configuration
+            Path crowdinConfigPath = plugin.getDataFolder().toPath().resolve("crowdin.yml");
+            if (!Files.exists(crowdinConfigPath)) {
+                logger.warning("[Registry] crowdin.yml not found - creating default...");
+                plugin.saveResource("crowdin.yml", false);
+            }
+
+            YamlConfiguration crowdinYml = YamlConfiguration.loadConfiguration(crowdinConfigPath.toFile());
+
+            // Create CrowdinConfig from both crowdin.yml and config.yml
+            this.crowdinConfig = new CrowdinConfig(
+                    crowdinYml,
+                    plugin.getConfig().getConfigurationSection("crowdin")
+            );
+
+            // Load credentials
+            this.crowdinCredentials = new CredentialManager(crowdinYml);
+
+            // Validate credentials
+            if (!crowdinCredentials.isValid()) {
+                logger.warning("[Registry] Crowdin credentials not configured properly.");
+                logger.warning("[Registry] Set CROWDIN_PROJECT_ID and CROWDIN_API_TOKEN environment variables");
+                logger.warning("[Registry] Crowdin integration disabled");
+                this.crowdinEnabled = false;
+                return;
+            }
+
+            logger.info("[Registry] Crowdin credentials loaded (project: " +
+                       crowdinCredentials.getProjectId() + ", token: " + crowdinCredentials.getMaskedToken() + ")");
+
+            // Create HTTP client
+            HttpClient httpClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(crowdinConfig.getTimeoutSeconds()))
+                    .build();
+
+            // Create Crowdin client
+            this.crowdinClient = new CrowdinClient(
+                    httpClient,
+                    crowdinCredentials.getApiToken(),
+                    crowdinCredentials.getProjectId(),
+                    logger,
+                    debug
+            );
+
+            // Create locale mapper
+            this.localeMapper = new LocaleMapper(crowdinConfig.getLocaleMappings());
+            logger.info("[Registry] Locale mappings: " + localeMapper.size() + " configured");
+
+            // Create conflict resolver
+            this.conflictResolver = ConflictResolver.create(
+                    crowdinConfig.getConflictResolution(),
+                    logger
+            );
+            logger.info("[Registry] Conflict resolution: " + conflictResolver.getName());
+
+            // Create upload strategy
+            this.uploadStrategy = new UploadStrategy(
+                    crowdinClient,
+                    crowdinConfig,
+                    logger,
+                    debug
+            );
+
+            // Create download strategy
+            this.downloadStrategy = new DownloadStrategy(
+                    crowdinClient,
+                    dynamicContentAPI,
+                    localeMapper,
+                    crowdinConfig,
+                    namespaceManager.getLanguagesDir(),
+                    logger,
+                    debug
+            );
+
+            // Create sync engine
+            this.crowdinSyncEngine = new CrowdinSyncEngine(
+                    crowdinClient,
+                    dynamicContentAPI,
+                    dynamicTranslationRepo,
+                    registry,
+                    namespaceManager,
+                    cache,
+                    backupService,
+                    uploadStrategy,
+                    downloadStrategy,
+                    conflictResolver,
+                    crowdinConfig,
+                    logger,
+                    debug
+            );
+
+            // Create scheduler (if auto-sync enabled)
+            if (crowdinConfig.isAutoSyncEnabled()) {
+                this.crowdinScheduler = new CrowdinScheduler(
+                        plugin,
+                        crowdinSyncEngine,
+                        crowdinConfig,
+                        logger
+                );
+                logger.info("[Registry] Auto-sync scheduler created (interval: " +
+                           crowdinConfig.getAutoSyncIntervalMinutes() + " min)");
+            }
+
+            // Create webhook server (if enabled)
+            if (crowdinConfig.isWebhookEnabled()) {
+                this.crowdinWebhookServer = new CrowdinWebhookServer(
+                        crowdinConfig.getWebhookPort(),
+                        crowdinConfig.getWebhookSecret(),
+                        crowdinSyncEngine,
+                        logger,
+                        debug
+                );
+                logger.info("[Registry] Webhook server created (port: " +
+                           crowdinConfig.getWebhookPort() + ")");
+            }
+
+            // Create event listener
+            this.crowdinEventListener = new CrowdinEventListener(
+                    dynamicTranslationRepo,
+                    crowdinConfig,
+                    logger,
+                    debug
+            );
+
+            // Create command handler
+            this.crowdinCommand = new CrowdinCommand(
+                    this,
+                    crowdinSyncEngine,
+                    crowdinConfig,
+                    crowdinScheduler
+            );
+
+            // Create public API
+            this.crowdinAPI = new CrowdinAPIImpl(
+                    crowdinSyncEngine,
+                    crowdinConfig,
+                    crowdinCredentials.getProjectId()
+            );
+
+            // Create Redis broadcaster (if enabled)
+            if (plugin.getConfig().getBoolean("redis.enabled", false) &&
+                plugin.getConfig().getBoolean("redis.events.crowdin-sync", true)) {
+                String channel = plugin.getConfig().getString("redis.channel", "afterlanguage:sync");
+                this.redisSyncBroadcaster = new RedisSyncBroadcaster(
+                        channel,
+                        dynamicContentAPI,
+                        cache,
+                        logger,
+                        debug
+                );
+                logger.info("[Registry] Redis sync broadcaster created (channel: " + channel + ")");
+            }
+
+            logger.info("[Registry] Crowdin integration initialized successfully!");
+
+        } catch (Exception e) {
+            logger.severe("[Registry] Failed to initialize Crowdin: " + e.getMessage());
+            e.printStackTrace();
+            this.crowdinEnabled = false;
+        }
+    }
+
+    /**
+     * Starts Crowdin services (scheduler, webhook).
+     *
+     * <p>Called by PluginLifecycle after all services are initialized.</p>
+     */
+    public void startCrowdinServices() {
+        if (!crowdinEnabled) {
+            return;
+        }
+
+        // Start scheduler
+        if (crowdinScheduler != null) {
+            crowdinScheduler.start();
+        }
+
+        // Start webhook server
+        if (crowdinWebhookServer != null) {
+            try {
+                crowdinWebhookServer.startServer();
+            } catch (Exception e) {
+                logger.warning("[Registry] Failed to start webhook server: " + e.getMessage());
+            }
+        }
+
+        // Register Crowdin event listener
+        if (crowdinEventListener != null) {
+            Bukkit.getPluginManager().registerEvents(crowdinEventListener, plugin);
+        }
+
+        // Subscribe to Redis
+        if (redisSyncBroadcaster != null) {
+            redisSyncBroadcaster.subscribe();
+        }
+    }
+
+    /**
+     * Stops Crowdin services.
+     *
+     * <p>Called by PluginLifecycle during shutdown.</p>
+     */
+    public void stopCrowdinServices() {
+        if (!crowdinEnabled) {
+            return;
+        }
+
+        // Stop scheduler
+        if (crowdinScheduler != null) {
+            crowdinScheduler.stop();
+        }
+
+        // Stop webhook server
+        if (crowdinWebhookServer != null) {
+            crowdinWebhookServer.stopServer();
+        }
+
+        // Unsubscribe from Redis
+        if (redisSyncBroadcaster != null) {
+            redisSyncBroadcaster.unsubscribe();
+        }
+
+        // Shutdown client
+        if (crowdinClient != null) {
+            crowdinClient.shutdown();
+        }
     }
 
     /**
@@ -342,7 +766,7 @@ public class PluginRegistry {
     public void registerMessageServiceProvider() {
         ServicesManager services = Bukkit.getServicesManager();
         services.register(MessageService.class, messageService, plugin, ServicePriority.Normal);
-        logger.info("[Registry] Registered as MessageService provider");
+        logger.info("[Registry] Registered MessageService provider");
     }
 
     /**
@@ -363,37 +787,28 @@ public class PluginRegistry {
     }
 
     /**
-     * Registers commands.
+     * Registers commands via AfterCore CommandFramework.
      */
     public void registerCommands() {
         // Create command instances
         this.langCommand = new LangCommand(this);
         this.afterLangCommand = new AfterLangCommand(this);
 
-        // Register commands via Bukkit
-        var langCmd = plugin.getCommand("lang");
-        if (langCmd != null) {
-            langCmd.setExecutor(langCommand);
-            langCmd.setTabCompleter(langCommand);
-        } else {
-            logger.warning("[Registry] Command /lang not found in plugin.yml!");
-        }
+        // Register commands via AfterCore CommandFramework
+        afterCore.commands().register(plugin, langCommand);
+        afterCore.commands().register(plugin, afterLangCommand);
 
-        var afterLangCmd = plugin.getCommand("afterlang");
-        if (afterLangCmd != null) {
-            afterLangCmd.setExecutor(afterLangCommand);
-            afterLangCmd.setTabCompleter(afterLangCommand);
-        } else {
-            logger.warning("[Registry] Command /afterlang not found in plugin.yml!");
-        }
-
-        logger.info("[Registry] Commands registered");
+        logger.info("[Registry] Commands registered via CommandFramework");
     }
 
     /**
      * Saves all pending player data.
      */
     public void saveAllPending() {
+        if (playerLanguageRepo == null) {
+            return;
+        }
+
         logger.info("[Registry] Saving all pending data...");
 
         // Save all cached player languages
@@ -420,8 +835,8 @@ public class PluginRegistry {
         // Register PlaceholderAPI expansion
         if (placeholderExpansion != null && Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
             try {
-                placeholderExpansion.register();
-                logger.info("[Registry] PlaceholderAPI expansion registered");
+                placeholderExpansion.registerAll();
+                logger.info("[Registry] PlaceholderAPI expansions registered (afterlang, alang, lang)");
             } catch (Exception e) {
                 logger.warning("[Registry] Failed to register PlaceholderAPI expansion: " + e.getMessage());
             }
@@ -475,6 +890,11 @@ public class PluginRegistry {
     }
 
     @NotNull
+    public MessageServiceImpl getMessageService() {
+        return messageService;
+    }
+
+    @NotNull
     public NamespaceManager getNamespaceManager() {
         return namespaceManager;
     }
@@ -497,5 +917,91 @@ public class PluginRegistry {
     @NotNull
     public Language getDefaultLanguage() {
         return defaultLanguage;
+    }
+
+    @NotNull
+    public DynamicContentAPI getDynamicContentAPI() {
+        return dynamicContentAPI;
+    }
+
+    @NotNull
+    public DynamicTranslationRepository getDynamicTranslationRepo() {
+        return dynamicTranslationRepo;
+    }
+
+    @NotNull
+    public TranslationExporter getExporter() {
+        return exporter;
+    }
+
+    @NotNull
+    public TranslationImporter getImporter() {
+        return importer;
+    }
+
+    @NotNull
+    public TranslationBackupService getBackupService() {
+        return backupService;
+    }
+
+    // ══════════════════════════════════════════════
+    // CROWDIN GETTERS (v1.3.0)
+    // ══════════════════════════════════════════════
+
+    /**
+     * Checks if Crowdin integration is enabled and initialized.
+     */
+    public boolean isCrowdinEnabled() {
+        return crowdinEnabled;
+    }
+
+    /**
+     * Gets the Crowdin API.
+     *
+     * @return CrowdinAPI or null if disabled
+     */
+    @Nullable
+    public CrowdinAPI getCrowdinAPI() {
+        return crowdinAPI;
+    }
+
+    /**
+     * Gets the Crowdin sync engine.
+     *
+     * @return CrowdinSyncEngine or null if disabled
+     */
+    @Nullable
+    public CrowdinSyncEngine getCrowdinSyncEngine() {
+        return crowdinSyncEngine;
+    }
+
+    /**
+     * Gets the Crowdin scheduler.
+     *
+     * @return CrowdinScheduler or null if disabled/not configured
+     */
+    @Nullable
+    public CrowdinScheduler getCrowdinScheduler() {
+        return crowdinScheduler;
+    }
+
+    /**
+     * Gets the Crowdin command handler.
+     *
+     * @return CrowdinCommand or null if disabled
+     */
+    @Nullable
+    public CrowdinCommand getCrowdinCommand() {
+        return crowdinCommand;
+    }
+
+    /**
+     * Gets the Crowdin configuration.
+     *
+     * @return CrowdinConfig or null if disabled
+     */
+    @Nullable
+    public CrowdinConfig getCrowdinConfig() {
+        return crowdinConfig;
     }
 }

@@ -1,7 +1,9 @@
 package com.afterlands.afterlanguage.core.resolver;
 
 import com.afterlands.afterlanguage.api.model.Language;
+import com.afterlands.afterlanguage.api.model.PluralCategory;
 import com.afterlands.afterlanguage.api.model.Translation;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.jetbrains.annotations.NotNull;
 
@@ -34,6 +36,26 @@ import java.util.stream.Stream;
  *     <li>Flat keys in YAML (no nesting)</li>
  *     <li>Subfolders generate prefix: {@code quests/tutorial.yml} → prefix {@code quests.tutorial.}</li>
  * </ul>
+ *
+ * <h3>Plural Forms (v1.2.0):</h3>
+ * <pre>
+ * # Simple translation
+ * welcome: "Welcome!"
+ *
+ * # With plural forms
+ * items:
+ *   one: "1 item"
+ *   other: "{count} items"
+ *
+ * # Full ICU plural forms
+ * items:
+ *   zero: "No items"
+ *   one: "1 item"
+ *   two: "2 items"
+ *   few: "{count} items (few)"
+ *   many: "{count} items (many)"
+ *   other: "{count} items"
+ * </pre>
  */
 public class YamlTranslationLoader {
 
@@ -115,59 +137,134 @@ public class YamlTranslationLoader {
     ) {
         try {
             YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file.toFile());
-
-            // Iterate over all keys in the YAML (flat structure expected)
-            for (String key : yaml.getKeys(false)) {
-                Object value = yaml.get(key);
-
-                if (value == null) {
-                    continue;
-                }
-
-                // Full key with prefix
-                String fullKey = prefix.isEmpty() ? key : prefix + key;
-
-                // Handle different value types
-                if (value instanceof String) {
-                    // Simple string translation
-                    String text = (String) value;
-                    translations.put(fullKey, new Translation(
-                            namespace,
-                            fullKey,
-                            language.code(),
-                            text,
-                            null, // No plural
-                            timestamp,
-                            null  // No source hash for file-based
-                    ));
-
-                } else if (value instanceof List) {
-                    // List = multiline lore
-                    @SuppressWarnings("unchecked")
-                    List<String> lines = (List<String>) value;
-                    String text = String.join("\\n", lines);
-                    translations.put(fullKey, new Translation(
-                            namespace,
-                            fullKey,
-                            language.code(),
-                            text,
-                            null,
-                            timestamp,
-                            null
-                    ));
-
-                } else {
-                    if (debug) {
-                        logger.warning("[YamlLoader] Unsupported value type for key " + fullKey +
-                                      ": " + value.getClass().getSimpleName());
-                    }
-                }
-            }
-
+            loadSection(yaml, "", namespace, language, prefix, timestamp, translations);
         } catch (Exception e) {
             logger.severe("[YamlLoader] Failed to load file " + file + ": " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Recursively loads a configuration section.
+     */
+    private void loadSection(
+            @NotNull ConfigurationSection section,
+            @NotNull String currentPath,
+            @NotNull String namespace,
+            @NotNull Language language,
+            @NotNull String filePrefix,
+            @NotNull Instant timestamp,
+            @NotNull Map<String, Translation> translations
+    ) {
+        for (String key : section.getKeys(false)) {
+            Object value = section.get(key);
+            String relativeKey = currentPath.isEmpty() ? key : currentPath + "." + key;
+            String fullKey = filePrefix + relativeKey;
+
+            if (value instanceof ConfigurationSection) {
+                ConfigurationSection subsection = (ConfigurationSection) value;
+                
+                // Check if this section is a plural definition
+                Map<PluralCategory, String> pluralForms = parsePluralForms(subsection, fullKey);
+                
+                if (pluralForms != null) {
+                    // It IS a plural definition
+                    String defaultText = pluralForms.getOrDefault(PluralCategory.OTHER, "");
+                    translations.put(fullKey, new Translation(
+                            namespace,
+                            fullKey,
+                            language.code(),
+                            defaultText,
+                            null,
+                            pluralForms,
+                            timestamp,
+                            null
+                    ));
+                } else {
+                    // It is NOT a plural definition (or invalid one), treat as nested structure
+                    // Recursively load subsection
+                    loadSection(subsection, relativeKey, namespace, language, filePrefix, timestamp, translations);
+                }
+                
+            } else if (value instanceof String) {
+                translations.put(fullKey, new Translation(
+                        namespace,
+                        fullKey,
+                        language.code(),
+                        (String) value,
+                        null,
+                        null,
+                        timestamp,
+                        null
+                ));
+                
+            } else if (value instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<String> lines = (List<String>) value;
+                String text = String.join("\n", lines);
+                translations.put(fullKey, new Translation(
+                        namespace,
+                        fullKey,
+                        language.code(),
+                        text,
+                        null,
+                        null,
+                        timestamp,
+                        null
+                ));
+            }
+        }
+    }
+
+    /**
+     * Parses plural forms from a YAML configuration section.
+     *
+     * <p>Expects keys like: zero, one, two, few, many, other</p>
+     *
+     * @return Map of PluralCategory to text, or null if not a valid plural definition
+     */
+    private Map<PluralCategory, String> parsePluralForms(
+            @NotNull ConfigurationSection section,
+            @NotNull String fullKey
+    ) {
+        // Optimization: Quick check if it looks like a plural section
+        // A plural section MUST NOT have arbitrary keys that are not plural categories
+        // But checking strictness might break mixed content.
+        // Better rule: It IS a plural section if it contains 'other' AND all other keys are valid categories.
+        
+        if (!section.contains(PluralCategory.OTHER.getKey())) {
+            return null; // Not a plural section if 'other' is missing
+        }
+
+        Map<PluralCategory, String> pluralForms = new HashMap<>();
+        boolean hasInvalidKeys = false;
+
+        for (String key : section.getKeys(false)) {
+            try {
+                PluralCategory category = PluralCategory.fromKey(key);
+                Object val = section.get(key);
+                if (val instanceof String) {
+                    pluralForms.put(category, (String) val);
+                } else {
+                    hasInvalidKeys = true; // Plural values must be strings
+                }
+            } catch (IllegalArgumentException e) {
+                hasInvalidKeys = true; // Found a key that isn't a plural category
+            }
+        }
+
+        // If we found 'other' but also found invalid keys (like 'enabled', 'title'),
+        // then this is likely a nested structure that just happens to have an 'other' key.
+        // However, standard plural format shouldn't be mixed with other keys.
+        // For safety, we'll assume:
+        // - If it has 'other' AND only valid plural keys -> It's a plural
+        // - If it has 'other' AND other keys -> Treat as nested structure (and 'other' is just a key named other)
+        
+        if (hasInvalidKeys) {
+            return null;
+        }
+
+        return pluralForms;
     }
 
     /**

@@ -1,0 +1,44 @@
+# AfterLanguage - Plural Forms Example (v1.2.0)
+# Este arquivo demonstra como usar plural forms no formato ICU
+
+# Tradução simples (sem pluralização)
+welcome: "&aWelcome to the server!"
+
+# Plural forms simples (ONE/OTHER) - Português
+items_pt:
+  one: "1 item"
+  other: "{count} itens"
+
+coins_pt:
+  one: "1 moeda"
+  other: "{count} moedas"
+
+# Plural forms para inglês (ONE/OTHER)
+# Nota: Em inglês, 0 também usa OTHER
+players_online:
+  one: "1 player online"
+  other: "{count} players online"
+
+# Exemplo com todas as categorias (para idiomas que precisam)
+# Português só usa ONE/OTHER, mas o formato suporta todas
+complex_example:
+  zero: "Nenhum resultado"
+  one: "1 resultado"
+  two: "2 resultados"
+  few: "{count} resultados"
+  many: "{count} resultados"
+  other: "{count} resultados"
+
+# Exemplos práticos
+time_remaining:
+  one: "1 segundo restante"
+  other: "{count} segundos restantes"
+
+quest_progress:
+  one: "1/{total} objetivo completo"
+  other: "{count}/{total} objetivos completos"
+
+# Nota: O sistema detecta automaticamente se é String simples ou Map de plural forms
+# - Se for String: tradução simples
+# - Se for Map com keys (zero, one, two, few, many, other): plural forms
+# - IMPORTANTE: A key 'other' é obrigatória!

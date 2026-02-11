@@ -63,6 +63,9 @@ public class PluginLifecycle {
         // 6. Enable integrations (ProtocolLib, PlaceholderAPI)
         registry.enableIntegrations();
 
+        // 7. Start Crowdin services (v1.3.0)
+        registry.startCrowdinServices();
+
         logger.info("[Lifecycle] Startup complete!");
     }
 
@@ -74,13 +77,16 @@ public class PluginLifecycle {
     public void shutdown() {
         logger.info("[Lifecycle] Shutting down...");
 
-        // 1. Unregister as provider
+        // 1. Stop Crowdin services (v1.3.0)
+        registry.stopCrowdinServices();
+
+        // 2. Unregister as provider
         registry.unregisterMessageServiceProvider();
 
-        // 2. Save all pending player data
+        // 3. Save all pending player data
         registry.saveAllPending();
 
-        // 3. Shutdown services
+        // 4. Shutdown services
         registry.shutdown();
 
         logger.info("[Lifecycle] Shutdown complete!");
@@ -94,10 +100,6 @@ public class PluginLifecycle {
 
         if (!fileExists("crowdin.yml")) {
             plugin.saveResource("crowdin.yml", false);
-        }
-
-        if (!fileExists("messages.yml")) {
-            plugin.saveResource("messages.yml", false);
         }
 
         logger.info("[Lifecycle] Default configs saved.");

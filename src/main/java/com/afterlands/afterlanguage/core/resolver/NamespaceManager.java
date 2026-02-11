@@ -121,8 +121,8 @@ public class NamespaceManager {
                     }
                 }
 
-                // Load translations for source language
-                loadNamespaceForLanguage(sourceLanguage, namespace);
+                // Load translations for ALL languages and reload atomically
+                loadAllLanguagesForNamespace(namespace);
 
                 logger.info("[NamespaceManager] Registered namespace: " + namespace);
 
@@ -152,8 +152,8 @@ public class NamespaceManager {
                     logger.fine("[NamespaceManager] Reloading namespace: " + namespace);
                 }
 
-                // Load for source language
-                loadNamespaceForLanguage(sourceLanguage, namespace);
+                // Load translations for ALL languages and reload atomically
+                loadAllLanguagesForNamespace(namespace);
 
                 // Invalidate caches (atomic operation)
                 cache.invalidateNamespace(namespace);
@@ -169,12 +169,46 @@ public class NamespaceManager {
     }
 
     /**
+     * Discovers namespace directories on disk that are not yet registered
+     * and registers them (without defaults).
+     *
+     * <p>Scans {@code languagesDir/<sourceLanguage>/} for directories
+     * that are not in {@code registeredNamespaces}.</p>
+     */
+    public void discoverAndRegisterNewNamespaces() {
+        Path sourceLangDir = languagesDir.resolve(sourceLanguage.code());
+        if (!Files.exists(sourceLangDir)) {
+            return;
+        }
+
+        try (Stream<Path> dirs = Files.list(sourceLangDir)) {
+            dirs.filter(Files::isDirectory)
+                .forEach(dir -> {
+                    String name = dir.getFileName().toString();
+                    if (!registeredNamespaces.containsKey(name)) {
+                        // ConcurrentHashMap does not allow null values, use the dir itself as sentinel
+                        registeredNamespaces.put(name, dir);
+                        logger.info("[NamespaceManager] Discovered new namespace on disk: " + name);
+                    }
+                });
+        } catch (IOException e) {
+            logger.warning("[NamespaceManager] Failed to scan for new namespaces: " + e.getMessage());
+        }
+    }
+
+    /**
      * Reloads all registered namespaces.
+     *
+     * <p>Before reloading, discovers any new namespace directories on disk
+     * that were not previously registered.</p>
      *
      * @return Future that completes when all namespaces are reloaded
      */
     @NotNull
     public CompletableFuture<Void> reloadAll() {
+        // Discover any new namespace directories added to disk since last load
+        discoverAndRegisterNewNamespaces();
+
         List<CompletableFuture<Void>> futures = new ArrayList<>();
 
         for (String namespace : registeredNamespaces.keySet()) {
@@ -185,29 +219,52 @@ public class NamespaceManager {
     }
 
     /**
-     * Loads translations for a specific language and namespace.
+     * Loads translations for ALL languages for a namespace and reloads the registry atomically.
      *
-     * <p>Uses YamlTranslationLoader and populates TranslationRegistry with atomic swap.</p>
+     * <p>Collects translations from all language directories first, then performs
+     * a single atomic swap in the registry. This prevents the race condition where
+     * loading languages sequentially would cause each reload to wipe previous languages.</p>
+     *
+     * @param namespace Namespace to load
      */
-    private void loadNamespaceForLanguage(@NotNull Language language, @NotNull String namespace) {
-        Map<String, Translation> translations = yamlLoader.loadNamespace(language, namespace);
+    private void loadAllLanguagesForNamespace(@NotNull String namespace) {
+        List<Translation> allTranslations = new ArrayList<>();
 
-        if (translations.isEmpty()) {
-            if (debug) {
-                logger.fine("[NamespaceManager] No translations loaded for " + namespace + " [" + language.code() + "]");
-            }
+        try (Stream<Path> langDirs = Files.list(languagesDir)) {
+            langDirs.filter(Files::isDirectory)
+                    .forEach(langDir -> {
+                        String langCode = langDir.getFileName().toString();
+                        Language lang = new Language(langCode, langCode, langCode.equals(sourceLanguage.code()));
+
+                        Map<String, Translation> translations = yamlLoader.loadNamespace(lang, namespace);
+
+                        if (translations.isEmpty()) {
+                            if (debug) {
+                                logger.fine("[NamespaceManager] No translations loaded for " + namespace + " [" + langCode + "]");
+                            }
+                            return;
+                        }
+
+                        allTranslations.addAll(translations.values());
+
+                        if (debug) {
+                            logger.info("[NamespaceManager] Collected " + translations.size() +
+                                       " translations for " + namespace + " [" + langCode + "]");
+                        }
+                    });
+        } catch (IOException e) {
+            logger.severe("[NamespaceManager] Failed to list language directories: " + e.getMessage());
             return;
         }
 
-        // Convert map keys to list of translations
-        List<Translation> translationList = new ArrayList<>(translations.values());
+        if (!allTranslations.isEmpty()) {
+            // Single atomic swap with ALL languages combined
+            registry.reloadNamespace(namespace, allTranslations);
 
-        // Atomic swap in registry
-        registry.reloadNamespace(namespace, translationList);
-
-        if (debug) {
-            logger.info("[NamespaceManager] Loaded " + translationList.size() +
-                       " translations for " + namespace + " [" + language.code() + "]");
+            if (debug) {
+                logger.info("[NamespaceManager] Atomically loaded " + allTranslations.size() +
+                           " total translations for namespace: " + namespace);
+            }
         }
     }
 

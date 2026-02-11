@@ -1,35 +1,20 @@
 name: AfterLanguage
 version: ${project.version}
+build-date: '${maven.build.timestamp}'
 main: com.afterlands.afterlanguage.AfterLanguagePlugin
 api-version: 1.13
 description: Enterprise-grade i18n plugin for AfterLands ecosystem
 author: AfterLands Team
 website: https://afterlands.com
-
 # Hard dependencies
 depend:
   - AfterCore
-
 # Soft dependencies
 softdepend:
   - PlaceholderAPI
   - ProtocolLib
-
 # Load order: POSTWORLD (after AfterCore)
 load: POSTWORLD
-
-commands:
-  lang:
-    description: Change your language preference
-    usage: /<command> [language]
-    permission: afterlanguage.use
-    aliases: [language, idioma]
-
-  afterlang:
-    description: Admin commands for translation management
-    usage: /<command> <subcommand>
-    permission: afterlanguage.admin
-    aliases: [al, alang]
 
 permissions:
   afterlanguage.use:

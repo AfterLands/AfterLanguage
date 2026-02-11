@@ -1,15 +1,17 @@
 package com.afterlands.afterlanguage.infra.service;
 
+import com.afterlands.core.api.messages.Placeholder;
 import com.afterlands.afterlanguage.core.resolver.MessageResolver;
 import com.afterlands.afterlanguage.infra.persistence.PlayerLanguageRepository;
 import com.afterlands.core.api.messages.MessageKey;
-import com.afterlands.core.api.messages.Placeholder;
 import com.afterlands.core.config.MessageService;
 import com.afterlands.core.metrics.MetricsService;
+import me.clip.placeholderapi.PlaceholderAPI;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 import java.util.Map;
@@ -28,6 +30,7 @@ import java.util.logging.Logger;
  *     <li>Falls back to literal key for missing translations</li>
  *     <li>Legacy methods return formatted error message</li>
  * </ul>
+ *
  */
 public class MessageServiceImpl implements MessageService {
 
@@ -37,6 +40,8 @@ public class MessageServiceImpl implements MessageService {
     private final String defaultLanguage;
     private final Logger logger;
     private final boolean debug;
+    private final boolean papiProcessMessages;
+    private final boolean papiAvailable;
 
     /**
      * Creates message service implementation.
@@ -47,6 +52,7 @@ public class MessageServiceImpl implements MessageService {
      * @param defaultLanguage Default language code
      * @param logger Logger
      * @param debug Enable debug logging
+     * @param papiProcessMessages Whether to process PlaceholderAPI placeholders in messages
      */
     public MessageServiceImpl(
             @NotNull MessageResolver messageResolver,
@@ -54,7 +60,8 @@ public class MessageServiceImpl implements MessageService {
             @NotNull MetricsService metrics,
             @NotNull String defaultLanguage,
             @NotNull Logger logger,
-            boolean debug
+            boolean debug,
+            boolean papiProcessMessages
     ) {
         this.messageResolver = Objects.requireNonNull(messageResolver, "messageResolver");
         this.languageRepo = Objects.requireNonNull(languageRepo, "languageRepo");
@@ -62,6 +69,8 @@ public class MessageServiceImpl implements MessageService {
         this.defaultLanguage = Objects.requireNonNull(defaultLanguage, "defaultLanguage");
         this.logger = Objects.requireNonNull(logger, "logger");
         this.debug = debug;
+        this.papiProcessMessages = papiProcessMessages;
+        this.papiAvailable = Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI");
     }
 
     // ══════════════════════════════════════════════
@@ -76,9 +85,10 @@ public class MessageServiceImpl implements MessageService {
             Objects.requireNonNull(key, "key");
 
             String language = getPlayerLanguage(player.getUniqueId());
-            String message = messageResolver.resolve(language, key.namespace(), key.path(), placeholders);
+            String message = messageResolver.resolve(language, key.namespace(), key.path(), toLocal(placeholders));
 
             if (!message.isEmpty()) {
+                message = applyPapi(player, message);
                 player.sendMessage(format(message));
             }
 
@@ -104,9 +114,10 @@ public class MessageServiceImpl implements MessageService {
 
         // Use plural key variant based on count
         String path = key.path() + (count == 1 ? ".one" : ".other");
-        String message = messageResolver.resolve(language, key.namespace(), path, allPlaceholders);
+        String message = messageResolver.resolve(language, key.namespace(), path, toLocal(allPlaceholders));
 
         if (!message.isEmpty()) {
+            message = applyPapi(player, message);
             player.sendMessage(format(message));
         }
     }
@@ -120,7 +131,8 @@ public class MessageServiceImpl implements MessageService {
             Objects.requireNonNull(key, "key");
 
             String language = getPlayerLanguage(player.getUniqueId());
-            String result = messageResolver.resolve(language, key.namespace(), key.path(), placeholders);
+            String result = messageResolver.resolve(language, key.namespace(), key.path(), toLocal(placeholders));
+            result = applyPapi(player, result);
 
             metrics.recordTime("afterlanguage.get", System.nanoTime() - start);
             metrics.increment("afterlanguage.get.success");
@@ -140,14 +152,14 @@ public class MessageServiceImpl implements MessageService {
         Objects.requireNonNull(defaultValue, "defaultValue");
 
         String language = getPlayerLanguage(player.getUniqueId());
-        String result = messageResolver.resolve(language, key.namespace(), key.path(), placeholders);
+        String result = messageResolver.resolve(language, key.namespace(), key.path(), toLocal(placeholders));
 
         // If result is missing format, return default
         if (result.startsWith("&c[Missing:")) {
             return defaultValue;
         }
 
-        return result;
+        return applyPapi(player, result);
     }
 
     @Override
@@ -285,5 +297,46 @@ public class MessageServiceImpl implements MessageService {
     public String format(@NotNull String raw) {
         Objects.requireNonNull(raw, "raw");
         return raw.replace("&", "§");
+    }
+
+    /**
+     * Applies PlaceholderAPI placeholders to a message if enabled and available.
+     * Fast-path: skips PAPI call entirely if message contains no '%' character.
+     *
+     * @param player Player context for PAPI resolution (null = skip)
+     * @param message Message to process
+     * @return Message with PAPI placeholders resolved, or original if not applicable
+     */
+    @NotNull
+    private String applyPapi(@Nullable Player player, @NotNull String message) {
+        if (!papiProcessMessages || !papiAvailable || player == null) {
+            return message;
+        }
+        if (message.indexOf('%') == -1) {
+            return message;
+        }
+        try {
+            return PlaceholderAPI.setPlaceholders(player, message);
+        } catch (Exception e) {
+            if (debug) {
+                logger.warning("[MessageService] PAPI processing failed: " + e.getMessage());
+            }
+            return message;
+        }
+    }
+
+    /**
+     * Converts AfterCore Placeholder array to local Placeholder array
+     * for MessageResolver compatibility.
+     */
+    @NotNull
+    private com.afterlands.afterlanguage.api.model.Placeholder[] toLocal(@NotNull Placeholder... placeholders) {
+        com.afterlands.afterlanguage.api.model.Placeholder[] local =
+                new com.afterlands.afterlanguage.api.model.Placeholder[placeholders.length];
+        for (int i = 0; i < placeholders.length; i++) {
+            local[i] = com.afterlands.afterlanguage.api.model.Placeholder.of(
+                    placeholders[i].key(), String.valueOf(placeholders[i].value()));
+        }
+        return local;
     }
 }

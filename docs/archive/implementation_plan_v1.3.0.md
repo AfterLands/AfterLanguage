@@ -5,9 +5,9 @@
 
 ---
 
-## 📊 Status da Implementação (Atualizado em 2026-02-01)
+## 📊 Status da Implementação (Atualizado em 2026-02-04)
 
-**Versão Atual:** v1.1.0 - Essential Integrations Production Ready
+**Versão Atual:** v1.3.0 - Crowdin Integration (Pendente Testes)
 
 ### Resumo Executivo
 
@@ -21,10 +21,14 @@
 | **ProtocolLib Integration** | ✅ Completo | 100% |
 | **PlaceholderAPI Expansion** | ✅ Completo | 100% |
 | **Action System** | ✅ Completo | 100% |
-| **Crowdin Integration** | ⚠️ Stub | 20% |
-| **Dynamic Content** | ⚠️ Stub | 30% |
-| **Admin Tools** | ⚠️ Parcial | 50% |
-| **Redis Sync** | ❌ Pendente | 5% |
+| **Dynamic Content API** | ✅ Completo | 100% |
+| **Pluralization (ICU)** | ✅ Completo | 100% |
+| **Export/Import/Backup** | ✅ Completo | 100% |
+| **Crowdin Integration** | ✅ Implementado | 90% (pendente testes) |
+| **Admin Tools** | ✅ Parcial | 75% (GUI editor pendente) |
+| **Redis Sync (Crowdin)** | ✅ Implementado | 90% (pendente testes) |
+| **Commands (fix)** | ✅ Corrigido | 100% |
+| **MessageService Provider** | ✅ Restaurado | 100% |
 
 ### Componentes Implementados ✅
 
@@ -39,7 +43,7 @@
 - ✅ **TranslationRegistry** - Atomic snapshot swapping
 - ✅ **TranslationCache** - Bounded caches com invalidation
 - ✅ **Config Scanner** - TranslationSchema API + diff detection
-- ✅ **Commands** - /lang (set/list/info), /afterlang (reload/stats/cache)
+- ✅ **Commands** - /lang (set/list/info/gui), /afterlang (reload/stats/cache + dynamic/backup/export/import/crowdin)
 - ✅ **Observability** - Métricas via AfterCore MetricsService
 - ✅ **AfterCore Integration** - {lang:namespace:key} em InventoryService
 
@@ -49,15 +53,36 @@
 - ✅ **GUI Language Selector** - In-game inventory com banners e glow
 - ✅ **Action System** - first-join e language-change actions configuráveis
 
+**Dynamic Content & Tooling (v1.2.0):**
+- ✅ **Pluralization ICU** - 6 categorias, regras para pt/en/es
+- ✅ **DynamicContentAPI** - CRUD completo, 15+ métodos, Bukkit events
+- ✅ **Export/Import** - YAML com preservação de plural forms
+- ✅ **Backup System** - Timestamped, rotação automática
+
+**Crowdin Integration (v1.3.0):**
+- ✅ **CrowdinClient** - HTTP client API v2, retry exponencial, rate limiting
+- ✅ **CrowdinSyncEngine** - Orquestrador bidirecional (backup → upload → download → merge → reload)
+- ✅ **UploadStrategy** - Diff detection via MD5, batching
+- ✅ **DownloadStrategy** - Merge com conflict resolution
+- ✅ **ConflictResolver** - crowdin-wins / local-wins / manual (strategy pattern)
+- ✅ **CrowdinScheduler** - Auto-sync via BukkitTask
+- ✅ **CrowdinWebhookServer** - NanoHTTPD + HMAC-SHA256
+- ✅ **CrowdinEventListener** - Change tracking (pt_br → pending)
+- ✅ **RedisSyncBroadcaster** - Multi-server pub/sub
+- ✅ **CrowdinCommand** — 5 subcommands: sync/upload/download/status/test
+- ✅ **CrowdinAPI** - Interface pública + SyncResult
+
+**Runtime Fixes (v1.3.0):**
+- ✅ **CommandContext fix** - Adicionado `CommandContext ctx` a todos os 24 handlers @Subcommand
+- ✅ **MessageService restored** - `implements MessageService` restaurado, ServicesManager re-habilitado, `toLocal()` converter para Placeholder
+
 ### Componentes Pendentes ❌
 
-- ❌ **Crowdin Sync** - API HTTP + webhook listener (v1.3.0 planejado)
-- ❌ **Redis Sync** - Multi-server pub/sub (v1.3.0 planejado)
-- ❌ **Dynamic Content API** - registerDynamic/setTranslation (v1.2.0 planejado)
-- ❌ **GUI Translation Editor** - Admin tool (v1.2.0 planejado)
-- ❌ **Pluralization** - .one/.other syntax (v1.2.0 planejado)
-- ❌ **Export/Import Tools** - YAML export/import (v1.2.0 planejado)
-- ❌ **Adventure Components** - Modern 1.16+ support (v2.0.0 planejado)
+- ❌ **GUI Translation Editor** - Admin tool (Sprint 4 v1.2.0, pausado — YAMLs prontos, controller pendente)
+- ❌ **Debug tooling** - `/afterlang debug <key>` (v1.4.0)
+- ❌ **source_hash tracking** - OUTDATED detection para dynamic translations (v1.4.0)
+- ❌ **Adventure Components** - Modern 1.16+ support (v2.0.0)
+- ⏳ **Testes** - Nenhum teste de TESTING.md executado ainda (25 testes definidos)
 
 ### Performance Targets ✅
 

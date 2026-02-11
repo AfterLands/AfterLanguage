@@ -2,10 +2,10 @@ package com.afterlands.afterlanguage.infra.papi;
 
 import com.afterlands.afterlanguage.AfterLanguagePlugin;
 import com.afterlands.afterlanguage.api.model.Language;
+import com.afterlands.afterlanguage.api.model.Placeholder;
 import com.afterlands.afterlanguage.core.resolver.MessageResolver;
 import com.afterlands.afterlanguage.infra.persistence.PlayerLanguageRepository;
 import com.afterlands.core.api.messages.MessageKey;
-import com.afterlands.core.api.messages.Placeholder;
 import me.clip.placeholderapi.expansion.PlaceholderExpansion;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
@@ -35,15 +35,18 @@ import java.util.logging.Logger;
  */
 public class AfterLanguageExpansion extends PlaceholderExpansion {
 
+    private static final String[] ALIASES = {"alang", "lang"};
+
     private final AfterLanguagePlugin plugin;
     private final PlayerLanguageRepository languageRepository;
     private final MessageResolver messageResolver;
     private final Language defaultLanguage;
     private final Logger logger;
     private final boolean debug;
+    private final String identifier;
 
     /**
-     * Creates PlaceholderAPI expansion.
+     * Creates PlaceholderAPI expansion with the default identifier "afterlang".
      *
      * @param plugin Plugin instance
      * @param languageRepository Player language repository
@@ -60,18 +63,42 @@ public class AfterLanguageExpansion extends PlaceholderExpansion {
             @NotNull Logger logger,
             boolean debug
     ) {
+        this(plugin, languageRepository, messageResolver, defaultLanguage, logger, debug, "afterlang");
+    }
+
+    private AfterLanguageExpansion(
+            @NotNull AfterLanguagePlugin plugin,
+            @NotNull PlayerLanguageRepository languageRepository,
+            @NotNull MessageResolver messageResolver,
+            @NotNull Language defaultLanguage,
+            @NotNull Logger logger,
+            boolean debug,
+            @NotNull String identifier
+    ) {
         this.plugin = plugin;
         this.languageRepository = languageRepository;
         this.messageResolver = messageResolver;
         this.defaultLanguage = defaultLanguage;
         this.logger = logger;
         this.debug = debug;
+        this.identifier = identifier;
+    }
+
+    /**
+     * Registers this expansion and all alias expansions (%alang_...%, %lang_...%).
+     */
+    public void registerAll() {
+        this.register();
+        for (String alias : ALIASES) {
+            new AfterLanguageExpansion(plugin, languageRepository, messageResolver,
+                    defaultLanguage, logger, debug, alias).register();
+        }
     }
 
     @Override
     @NotNull
     public String getIdentifier() {
-        return "afterlang";
+        return identifier;
     }
 
     @Override
@@ -197,7 +224,8 @@ public class AfterLanguageExpansion extends PlaceholderExpansion {
             ));
         }
 
-        return resolved;
+        // Translate color codes (&c -> §c, etc.)
+        return resolved.replace("&", "§");
     }
 
     /**

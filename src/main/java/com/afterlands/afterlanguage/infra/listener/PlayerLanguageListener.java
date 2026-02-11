@@ -1,5 +1,6 @@
 package com.afterlands.afterlanguage.infra.listener;
 
+import com.afterlands.afterlanguage.core.resolver.TranslationRegistry;
 import com.afterlands.afterlanguage.infra.persistence.PlayerLanguageRepository;
 import com.afterlands.core.actions.ActionService;
 import com.afterlands.core.actions.ActionSpec;
@@ -49,6 +50,7 @@ import java.util.logging.Logger;
 public class PlayerLanguageListener implements Listener {
 
     private final PlayerLanguageRepository repository;
+    private final TranslationRegistry registry;
     private final String defaultLanguage;
     private final Logger logger;
     private final boolean debug;
@@ -62,6 +64,7 @@ public class PlayerLanguageListener implements Listener {
      * Creates player language listener.
      *
      * @param repository Player language repository
+     * @param registry Translation registry
      * @param defaultLanguage Default language code
      * @param config Plugin configuration
      * @param afterCore AfterCore API
@@ -70,6 +73,7 @@ public class PlayerLanguageListener implements Listener {
      */
     public PlayerLanguageListener(
             @NotNull PlayerLanguageRepository repository,
+            @NotNull TranslationRegistry registry,
             @NotNull String defaultLanguage,
             @NotNull FileConfiguration config,
             @NotNull AfterCoreAPI afterCore,
@@ -77,6 +81,7 @@ public class PlayerLanguageListener implements Listener {
             boolean debug
     ) {
         this.repository = repository;
+        this.registry = registry;
         this.defaultLanguage = defaultLanguage;
         this.config = config;
         this.afterCore = afterCore;
@@ -103,11 +108,21 @@ public class PlayerLanguageListener implements Listener {
 
                         // Auto-detect from client locale
                         String clientLocale = detectClientLocale(player);
-                        String language = normalizeLocale(clientLocale);
+                        String rawLanguage = normalizeLocale(clientLocale);
+                        String language = rawLanguage;
 
-                        if (debug) {
-                            logger.info("[PlayerLanguageListener] First join for " + player.getName() +
-                                       " - detected locale: " + clientLocale + " -> " + language);
+                        // Validate against loaded languages
+                        if (!registry.hasLanguage(language)) {
+                            if (debug) {
+                                logger.info("[PlayerLanguageListener] Detected language " + language + 
+                                          " not loaded. Using default: " + defaultLanguage);
+                            }
+                            language = defaultLanguage;
+                        } else {
+                            if (debug) {
+                                logger.info("[PlayerLanguageListener] First join for " + player.getName() +
+                                           " - detected locale: " + clientLocale + " -> " + language);
+                            }
                         }
 
                         // Save with auto-detected flag

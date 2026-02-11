@@ -7,7 +7,7 @@
 
     <groupId>com.afterlands</groupId>
     <artifactId>AfterLanguage</artifactId>
-    <version>1.1.0</version>
+    <version>1.4.0</version>
     <packaging>jar</packaging>
 
     <name>AfterLanguage</name>
@@ -100,6 +100,14 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- NanoHTTPD for Crowdin webhook server (v1.3.0) -->
+        <dependency>
+            <groupId>org.nanohttpd</groupId>
+            <artifactId>nanohttpd</artifactId>
+            <version>2.3.1</version>
+            <scope>compile</scope>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -148,6 +156,13 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <relocations>
+                                <!-- Relocate NanoHTTPD to avoid conflicts (v1.3.0) -->
+                                <relocation>
+                                    <pattern>fi.iki.elonen</pattern>
+                                    <shadedPattern>com.afterlands.afterlanguage.libs.nanohttpd</shadedPattern>
+                                </relocation>
+                            </relocations>
                             <filters>
                                 <filter>
                                     <artifact>*:*</artifact>
@@ -175,7 +190,7 @@
                         <configuration>
                             <target>
                                 <copy file="target/${project.name}-${project.version}.jar"
-                                      tofile="C:/Users/icega/OneDrive/Área de Trabalho/AfterCompiled/${project.name}.jar"
+                                      tofile="C:/Users/icega/OneDrive/Área de Trabalho/AfterCompiled/${project.name}-${project.version}.jar"
                                       overwrite="true" failonerror="false"/>
                             </target>
                         </configuration>

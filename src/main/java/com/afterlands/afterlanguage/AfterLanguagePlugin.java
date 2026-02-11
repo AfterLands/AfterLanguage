@@ -2,6 +2,8 @@ package com.afterlands.afterlanguage;
 
 import com.afterlands.afterlanguage.bootstrap.PluginLifecycle;
 import com.afterlands.afterlanguage.bootstrap.PluginRegistry;
+import com.afterlands.core.util.PluginBanner;
+
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
@@ -41,6 +43,7 @@ public final class AfterLanguagePlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        PluginBanner.printBanner(this);
         long startTime = System.currentTimeMillis();
 
         try {
@@ -51,8 +54,7 @@ public final class AfterLanguagePlugin extends JavaPlugin {
             this.lifecycle = new PluginLifecycle(this, registry);
             lifecycle.startup();
 
-            long elapsed = System.currentTimeMillis() - startTime;
-            getLogger().info("AfterLanguage enabled successfully in " + elapsed + "ms!");
+            PluginBanner.printLoadTime(this, startTime);
 
         } catch (Exception e) {
             getLogger().severe("Failed to enable AfterLanguage: " + e.getMessage());

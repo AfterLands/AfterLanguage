@@ -216,6 +216,53 @@ public class TranslationRegistry {
     }
 
     /**
+     * Registers a translation (alias for {@link #put(Translation)}).
+     *
+     * <p>Provided for API clarity when used by DynamicContentAPI.</p>
+     *
+     * @param translation Translation to register
+     */
+    public void register(@NotNull Translation translation) {
+        put(translation);
+    }
+
+    /**
+     * Unregisters a translation (alias for {@link #remove(String, String, String)}).
+     *
+     * <p>Provided for API clarity when used by DynamicContentAPI.</p>
+     *
+     * @param namespace Namespace
+     * @param key Translation key
+     * @param language Language code
+     * @return true if translation was unregistered
+     */
+    public boolean unregister(
+            @NotNull String namespace,
+            @NotNull String key,
+            @NotNull String language
+    ) {
+        return remove(language, namespace, key);
+    }
+
+    /**
+     * Clears all translations for a namespace across all languages.
+     *
+     * @param namespace Namespace to clear
+     */
+    public void clearNamespace(@NotNull String namespace) {
+        snapshot.updateAndGet(current -> {
+            Map<String, Map<String, Map<String, Translation>>> newSnapshot = new ConcurrentHashMap<>(current);
+
+            // Remove namespace from all language maps
+            for (Map<String, Map<String, Translation>> langMap : newSnapshot.values()) {
+                langMap.remove(namespace);
+            }
+
+            return newSnapshot;
+        });
+    }
+
+    /**
      * Reloads a namespace by replacing all its translations atomically.
      *
      * <p>This is used for hot-reload: load new translations from disk/DB,
@@ -261,6 +308,16 @@ public class TranslationRegistry {
      */
     public void clear() {
         snapshot.set(new ConcurrentHashMap<>());
+    }
+
+    /**
+     * Checks if a language is loaded in the registry.
+     *
+     * @param language Language code
+     * @return true if language exists
+     */
+    public boolean hasLanguage(@NotNull String language) {
+        return snapshot.get().containsKey(language);
     }
 
     /**
