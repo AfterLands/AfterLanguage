@@ -254,6 +254,9 @@ public class CrowdinSyncEngine {
                                 });
                     }
 
+                    // Note: Cleanup is handled in syncAllNamespaces() to avoid running multiple times
+                    // Individual namespace sync does NOT trigger cleanup to prevent duplicates
+
                     return result;
                 }));
             });
@@ -504,6 +507,9 @@ public class CrowdinSyncEngine {
      */
     @NotNull
     public CompletableFuture<List<SyncResult>> syncAllNamespaces() {
+        // Keep in-memory namespace index aligned with disk before deciding what to sync.
+        namespaceManager.discoverAndRegisterNewNamespaces();
+
         List<String> namespaces = config.getSyncNamespaces();
 
         if (namespaces.isEmpty()) {
@@ -524,9 +530,46 @@ public class CrowdinSyncEngine {
         }
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenApply(v -> futures.stream()
-                        .map(CompletableFuture::join)
-                        .toList());
+                .thenApply(v -> {
+                    List<SyncResult> results = futures.stream()
+                            .map(CompletableFuture::join)
+                            .toList();
+
+                    // Run cleanup once after all namespaces synced (if enabled)
+                    if (config.isCleanupOnSync() && config.isServerScoped()) {
+                        boolean anySuccess = results.stream().anyMatch(SyncResult::isSuccess);
+                        if (anySuccess) {
+                            logger.info("[CrowdinSyncEngine] Running automatic cleanup after batch sync (cleanup-on-sync enabled)");
+                            findOrphanedResources()
+                                    .thenCompose(cleanupResult -> {
+                                        if (cleanupResult.hasOrphans()) {
+                                            logger.info("[CrowdinSyncEngine] Found " + cleanupResult.totalOrphans() +
+                                                       " orphaned resources, deleting...");
+                                            return cleanupOrphanedResources(
+                                                    cleanupResult.orphanedFiles(),
+                                                    cleanupResult.orphanedDirectories()
+                                            );
+                                        } else {
+                                            logger.info("[CrowdinSyncEngine] No orphaned resources found");
+                                            return CompletableFuture.completedFuture(cleanupResult);
+                                        }
+                                    })
+                                    .thenAccept(cleanupResult -> {
+                                        if (cleanupResult.filesDeleted() > 0 || cleanupResult.directoriesDeleted() > 0) {
+                                            logger.info("[CrowdinSyncEngine] Cleanup complete: " +
+                                                       cleanupResult.filesDeleted() + " files, " +
+                                                       cleanupResult.directoriesDeleted() + " directories deleted");
+                                        }
+                                    })
+                                    .exceptionally(ex -> {
+                                        logger.warning("[CrowdinSyncEngine] Automatic cleanup failed: " + ex.getMessage());
+                                        return null;
+                                    });
+                        }
+                    }
+
+                    return results;
+                });
     }
 
     /**
@@ -699,5 +742,304 @@ public class CrowdinSyncEngine {
     @NotNull
     public CompletableFuture<Boolean> testConnection() {
         return client.testConnection();
+    }
+
+    /**
+     * Result of a cleanup operation.
+     *
+     * @param orphanedFiles List of orphaned files found
+     * @param orphanedDirectories List of orphaned directories found
+     * @param filesDeleted Number of files deleted
+     * @param directoriesDeleted Number of directories deleted
+     * @param errors List of errors during cleanup
+     */
+    public record CleanupResult(
+            @NotNull List<OrphanedResource> orphanedFiles,
+            @NotNull List<OrphanedResource> orphanedDirectories,
+            int filesDeleted,
+            int directoriesDeleted,
+            @NotNull List<String> errors
+    ) {
+        public boolean hasOrphans() {
+            return !orphanedFiles.isEmpty() || !orphanedDirectories.isEmpty();
+        }
+
+        public int totalOrphans() {
+            return orphanedFiles.size() + orphanedDirectories.size();
+        }
+    }
+
+    /**
+     * Represents an orphaned resource on Crowdin.
+     *
+     * @param id Resource ID
+     * @param name Resource name
+     * @param path Full path on Crowdin
+     * @param type Resource type (file or directory)
+     */
+    public record OrphanedResource(
+            long id,
+            @NotNull String name,
+            @NotNull String path,
+            @NotNull String type
+    ) {
+        @Override
+        public String toString() {
+            return type + ": " + path + " (id: " + id + ")";
+        }
+    }
+
+    /**
+     * Finds orphaned files and directories on Crowdin.
+     *
+     * <p>An orphaned resource is one that exists on Crowdin but no longer has
+     * a corresponding namespace registered locally.</p>
+     *
+     * <p><b>Safety Rules:</b></p>
+     * <ul>
+     *     <li>Only scans within the server's own directory (server-id)</li>
+     *     <li>NEVER touches namespace-directories overrides (shared namespaces)</li>
+     *     <li>NEVER touches root-level resources (no server-id isolation)</li>
+     *     <li>Requires server-id to be configured</li>
+     * </ul>
+     *
+     * @return CompletableFuture with cleanup result (preview only, no deletion)
+     */
+    @NotNull
+    public CompletableFuture<CleanupResult> findOrphanedResources() {
+        // Ensure newly discovered namespaces on disk are not treated as orphaned.
+        namespaceManager.discoverAndRegisterNewNamespaces();
+
+        // Safety check: server-id must be configured
+        if (!config.isServerScoped()) {
+            return CompletableFuture.completedFuture(
+                    new CleanupResult(
+                            List.of(),
+                            List.of(),
+                            0,
+                            0,
+                            List.of("Cleanup requires server-id to be configured in config.yml for safety. " +
+                                    "Cannot cleanup without directory isolation.")
+                    )
+            );
+        }
+
+        String serverId = config.getServerId();
+        logger.info("[CrowdinSyncEngine] Finding orphaned resources in server directory: /" + serverId);
+
+        // Get all registered namespaces
+        Set<String> registeredNamespaces = namespaceManager.getRegisteredNamespaces();
+
+        // Build a set of namespaces that should exist under /server-id/
+        // A namespace belongs to /server-id/ if its resolved directory path starts with [server-id, ...]
+        Set<String> serverOwnedNamespaces = new HashSet<>();
+        for (String ns : registeredNamespaces) {
+            List<String> dirPath = config.getDirectoryPathForNamespace(ns);
+            // Check if first segment is the server-id
+            if (!dirPath.isEmpty() && dirPath.get(0).equals(serverId)) {
+                serverOwnedNamespaces.add(ns);
+            }
+        }
+
+        logger.info("[CrowdinSyncEngine] Server owns " + serverOwnedNamespaces.size() +
+                   " namespaces under /" + serverId + "/ (total registered: " + registeredNamespaces.size() + ")");
+
+        // List all files and directories on Crowdin
+        return CompletableFuture.allOf(
+                client.listFiles(),
+                client.listDirectories()
+        ).thenApply(v -> List.of(
+                client.listFiles().join(),
+                client.listDirectories().join()
+        )).thenApply(results -> {
+            List<com.google.gson.JsonObject> allFiles = results.get(0);
+            List<com.google.gson.JsonObject> allDirectories = results.get(1);
+
+            List<OrphanedResource> orphanedFiles = new ArrayList<>();
+            List<OrphanedResource> orphanedDirs = new ArrayList<>();
+
+            // Find orphaned files
+            for (com.google.gson.JsonObject file : allFiles) {
+                String path = file.get("path").getAsString();
+                long id = file.get("id").getAsLong();
+                String name = file.get("name").getAsString();
+
+                // Only consider files within our server directory
+                if (!path.startsWith("/" + serverId + "/")) {
+                    continue;
+                }
+
+                // Extract namespace from path: /server-id/namespace/file.yml
+                String[] parts = path.substring(1).split("/");
+                if (parts.length < 2) {
+                    continue;
+                }
+
+                String namespace = parts[1];
+
+                // Check if namespace is still registered locally
+                if (!serverOwnedNamespaces.contains(namespace)) {
+                    orphanedFiles.add(new OrphanedResource(id, name, path, "file"));
+                }
+            }
+
+            // Build a map of directoryId -> directory name for path resolution
+            Map<Long, String> dirIdToName = new HashMap<>();
+            Map<Long, Long> dirIdToParentId = new HashMap<>();
+            for (com.google.gson.JsonObject dir : allDirectories) {
+                long id = dir.get("id").getAsLong();
+                String name = dir.get("name").getAsString();
+                Long parentId = dir.has("directoryId") && !dir.get("directoryId").isJsonNull()
+                        ? dir.get("directoryId").getAsLong()
+                        : null;
+
+                dirIdToName.put(id, name);
+                if (parentId != null) {
+                    dirIdToParentId.put(id, parentId);
+                }
+            }
+
+            // Find the server directory ID by name
+            Long serverDirId = null;
+            for (com.google.gson.JsonObject dir : allDirectories) {
+                long id = dir.get("id").getAsLong();
+                String name = dir.get("name").getAsString();
+                Long parentId = dir.has("directoryId") && !dir.get("directoryId").isJsonNull()
+                        ? dir.get("directoryId").getAsLong()
+                        : null;
+
+                // Server directory is at root level (parentId == null) with name == serverId
+                if (parentId == null && name.equals(serverId)) {
+                    serverDirId = id;
+                    break;
+                }
+            }
+
+            // Find orphaned directories (only immediate children of server directory)
+            if (serverDirId != null) {
+                for (com.google.gson.JsonObject dir : allDirectories) {
+                    long id = dir.get("id").getAsLong();
+                    String name = dir.get("name").getAsString();
+                    Long parentId = dir.has("directoryId") && !dir.get("directoryId").isJsonNull()
+                            ? dir.get("directoryId").getAsLong()
+                            : null;
+
+                    // Only consider directories that are direct children of server directory
+                    if (parentId != null && parentId.equals(serverDirId)) {
+                        // This is a direct child of /server-id/
+                        if (!serverOwnedNamespaces.contains(name)) {
+                            String path = "/" + serverId + "/" + name;
+                            orphanedDirs.add(new OrphanedResource(id, name, path, "directory"));
+                        }
+                    }
+                }
+            }
+
+            logger.info("[CrowdinSyncEngine] Found " + orphanedFiles.size() + " orphaned files, " +
+                       orphanedDirs.size() + " orphaned directories");
+
+            return new CleanupResult(orphanedFiles, orphanedDirs, 0, 0, List.of());
+        }).exceptionally(ex -> {
+            logger.warning("[CrowdinSyncEngine] Failed to find orphaned resources: " + ex.getMessage());
+            return new CleanupResult(
+                    List.of(),
+                    List.of(),
+                    0,
+                    0,
+                    List.of("Failed to list Crowdin resources: " + ex.getMessage())
+            );
+        });
+    }
+
+    /**
+     * Cleans up orphaned resources on Crowdin by deleting them.
+     *
+     * <p>This method deletes files and directories that were identified as orphaned
+     * by {@link #findOrphanedResources()}.</p>
+     *
+     * @param orphanedFiles List of orphaned files to delete
+     * @param orphanedDirectories List of orphaned directories to delete
+     * @return CompletableFuture with cleanup result
+     */
+    @NotNull
+    public CompletableFuture<CleanupResult> cleanupOrphanedResources(
+            @NotNull List<OrphanedResource> orphanedFiles,
+            @NotNull List<OrphanedResource> orphanedDirectories
+    ) {
+        logger.info("[CrowdinSyncEngine] Cleaning up " + orphanedFiles.size() + " files and " +
+                   orphanedDirectories.size() + " directories");
+
+        List<String> errors = new ArrayList<>();
+        int filesDeleted = 0;
+        int dirsDeleted = 0;
+
+        // Delete files first
+        List<CompletableFuture<Void>> fileDeletions = new ArrayList<>();
+        for (OrphanedResource file : orphanedFiles) {
+            fileDeletions.add(
+                    client.deleteFile(file.id())
+                            .thenRun(() -> logger.info("[CrowdinSyncEngine] Deleted file: " + file.path()))
+                            .exceptionally(ex -> {
+                                String error = "Failed to delete file " + file.path() + ": " + ex.getMessage();
+                                logger.warning("[CrowdinSyncEngine] " + error);
+                                errors.add(error);
+                                return null;
+                            })
+            );
+        }
+
+        return CompletableFuture.allOf(fileDeletions.toArray(new CompletableFuture[0]))
+                .thenApply(v -> {
+                    long deleted = fileDeletions.stream()
+                            .filter(f -> !f.isCompletedExceptionally())
+                            .count();
+                    return (int) deleted;
+                })
+                .thenCompose(deletedFiles -> {
+                    // Delete directories after files
+                    List<CompletableFuture<Void>> dirDeletions = new ArrayList<>();
+                    for (OrphanedResource dir : orphanedDirectories) {
+                        dirDeletions.add(
+                                client.deleteDirectory(dir.id())
+                                        .thenRun(() -> logger.info("[CrowdinSyncEngine] Deleted directory: " + dir.path()))
+                                        .exceptionally(ex -> {
+                                            String error = "Failed to delete directory " + dir.path() + ": " + ex.getMessage();
+                                            logger.warning("[CrowdinSyncEngine] " + error);
+                                            errors.add(error);
+                                            return null;
+                                        })
+                        );
+                    }
+
+                    return CompletableFuture.allOf(dirDeletions.toArray(new CompletableFuture[0]))
+                            .thenApply(v2 -> {
+                                long deleted = dirDeletions.stream()
+                                        .filter(f -> !f.isCompletedExceptionally())
+                                        .count();
+                                return new int[]{deletedFiles, (int) deleted};
+                            });
+                })
+                .thenApply(counts -> {
+                    logger.info("[CrowdinSyncEngine] Cleanup complete: " + counts[0] + " files, " +
+                               counts[1] + " directories deleted");
+                    return new CleanupResult(
+                            orphanedFiles,
+                            orphanedDirectories,
+                            counts[0],
+                            counts[1],
+                            errors
+                    );
+                })
+                .exceptionally(ex -> {
+                    logger.severe("[CrowdinSyncEngine] Cleanup failed: " + ex.getMessage());
+                    errors.add("Cleanup operation failed: " + ex.getMessage());
+                    return new CleanupResult(
+                            orphanedFiles,
+                            orphanedDirectories,
+                            0,
+                            0,
+                            errors
+                    );
+                });
     }
 }

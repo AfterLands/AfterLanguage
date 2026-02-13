@@ -307,6 +307,118 @@ public class CrowdinCommand {
     }
 
     /**
+     * Handles /afterlang crowdin cleanup [--confirm]
+     *
+     * <p>Finds and optionally deletes orphaned files and directories on Crowdin.</p>
+     *
+     * <p>Without --confirm, shows a preview of what would be deleted.
+     * With --confirm, actually performs the deletion.</p>
+     *
+     * @param sender Command sender
+     * @param confirm Whether to confirm deletion (true if --confirm flag passed)
+     */
+    public void handleCleanup(@NotNull CommandSender sender, boolean confirm) {
+        sender.sendMessage("§7§m                                    ");
+        sender.sendMessage("§6§lCrowdin Cleanup");
+        sender.sendMessage("");
+
+        // Check if server-id is configured
+        if (!crowdinConfig.isServerScoped()) {
+            sender.sendMessage("§cCleanup requires server-id to be configured!");
+            sender.sendMessage("§7Set 'crowdin.server-id' in config.yml to enable cleanup.");
+            sender.sendMessage("§7This ensures cleanup only affects this server's resources.");
+            sender.sendMessage("§7§m                                    ");
+            return;
+        }
+
+        String serverId = crowdinConfig.getServerId();
+        sender.sendMessage("§7Server ID: §e" + serverId);
+        sender.sendMessage("§7Scanning for orphaned resources in §e/" + serverId + "/§7...");
+        sender.sendMessage("");
+
+        syncEngine.findOrphanedResources()
+                .thenAccept(result -> {
+                    if (!result.errors().isEmpty()) {
+                        sender.sendMessage("§cErrors occurred:");
+                        for (String error : result.errors()) {
+                            sender.sendMessage("  §c- " + error);
+                        }
+                        sender.sendMessage("§7§m                                    ");
+                        return;
+                    }
+
+                    if (!result.hasOrphans()) {
+                        sender.sendMessage("§a✓ No orphaned resources found!");
+                        sender.sendMessage("§7All files and directories on Crowdin match local namespaces.");
+                        sender.sendMessage("§7§m                                    ");
+                        return;
+                    }
+
+                    // Show preview
+                    sender.sendMessage("§eFound " + result.totalOrphans() + " orphaned resources:");
+                    sender.sendMessage("");
+
+                    if (!result.orphanedFiles().isEmpty()) {
+                        sender.sendMessage("§7Orphaned Files (" + result.orphanedFiles().size() + "):");
+                        for (CrowdinSyncEngine.OrphanedResource file : result.orphanedFiles()) {
+                            sender.sendMessage("  §c✗ §e" + file.path());
+                        }
+                        sender.sendMessage("");
+                    }
+
+                    if (!result.orphanedDirectories().isEmpty()) {
+                        sender.sendMessage("§7Orphaned Directories (" + result.orphanedDirectories().size() + "):");
+                        for (CrowdinSyncEngine.OrphanedResource dir : result.orphanedDirectories()) {
+                            sender.sendMessage("  §c✗ §e" + dir.path());
+                        }
+                        sender.sendMessage("");
+                    }
+
+                    if (!confirm) {
+                        sender.sendMessage("§7To delete these resources, run:");
+                        sender.sendMessage("  §e/afterlang crowdin cleanup --confirm");
+                        sender.sendMessage("");
+                        sender.sendMessage("§8Note: Shared namespaces (namespace-directories) are never deleted.");
+                    } else {
+                        // Perform deletion
+                        sender.sendMessage("§7Deleting orphaned resources...");
+                        syncEngine.cleanupOrphanedResources(result.orphanedFiles(), result.orphanedDirectories())
+                                .thenAccept(cleanupResult -> {
+                                    sender.sendMessage("");
+                                    sender.sendMessage("§aCleanup complete!");
+                                    sender.sendMessage("§7  Files deleted: §e" + cleanupResult.filesDeleted() +
+                                                     "§7/§e" + result.orphanedFiles().size());
+                                    sender.sendMessage("§7  Directories deleted: §e" + cleanupResult.directoriesDeleted() +
+                                                     "§7/§e" + result.orphanedDirectories().size());
+
+                                    if (!cleanupResult.errors().isEmpty()) {
+                                        sender.sendMessage("");
+                                        sender.sendMessage("§eWarnings:");
+                                        for (String error : cleanupResult.errors()) {
+                                            sender.sendMessage("  §e- " + error);
+                                        }
+                                    }
+
+                                    sender.sendMessage("§7§m                                    ");
+                                })
+                                .exceptionally(ex -> {
+                                    sender.sendMessage("§cCleanup failed: " + ex.getMessage());
+                                    sender.sendMessage("§7§m                                    ");
+                                    return null;
+                                });
+                        return;
+                    }
+
+                    sender.sendMessage("§7§m                                    ");
+                })
+                .exceptionally(ex -> {
+                    sender.sendMessage("§cFailed to scan for orphaned resources: " + ex.getMessage());
+                    sender.sendMessage("§7§m                                    ");
+                    return null;
+                });
+    }
+
+    /**
      * Sends formatted sync result to sender.
      */
     private void sendSyncResult(@NotNull CommandSender sender, @NotNull SyncResult result) {

@@ -2,6 +2,7 @@ package com.afterlands.afterlanguage.infra.protocol;
 
 import com.afterlands.afterlanguage.AfterLanguagePlugin;
 import com.afterlands.afterlanguage.infra.persistence.PlayerLanguageRepository;
+import com.afterlands.afterlanguage.infra.service.InventoryCacheInvalidator;
 import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketAdapter;
@@ -182,12 +183,21 @@ public class ProtocolLibIntegration {
 
             // Check if player already has language configured
             repository.get(playerId).thenAccept(dataOpt -> {
+                String oldLanguage = dataOpt.map(PlayerLanguageRepository.PlayerLanguageData::language)
+                        .orElse(defaultLanguage);
                 boolean shouldAutoSet = dataOpt.isEmpty() ||
                         (dataOpt.isPresent() && dataOpt.get().autoDetected());
 
                 if (shouldAutoSet) {
                     // Auto-set language with auto_detected=true
                     repository.setLanguage(playerId, mappedLocale, true).thenRun(() -> {
+                        InventoryCacheInvalidator.onLanguageChanged(
+                                playerId,
+                                oldLanguage,
+                                mappedLocale,
+                                logger,
+                                debug);
+
                         logger.info(String.format(
                                 "[ProtocolLib] Auto-set language for %s: %s",
                                 player.getName(), mappedLocale

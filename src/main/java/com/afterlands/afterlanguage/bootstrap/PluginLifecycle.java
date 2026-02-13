@@ -3,26 +3,29 @@ package com.afterlands.afterlanguage.bootstrap;
 import com.afterlands.afterlanguage.AfterLanguagePlugin;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.File;
 import java.util.logging.Logger;
 
 /**
  * Manages plugin lifecycle and orchestrates startup/shutdown flows.
  *
- * <p>Implements the startup sequence defined in spec section 12.1.</p>
+ * <p>
+ * Implements the startup sequence defined in spec section 12.1.
+ * </p>
  *
  * <h3>Startup Sequence:</h3>
  * <ol>
- *     <li>Load config.yml and crowdin.yml</li>
- *     <li>Connect to database via AfterCore SqlService</li>
- *     <li>Create tables if not exist (migrations)</li>
- *     <li>Load translation files for enabled languages (populate L2)</li>
- *     <li>Pre-compile templates if enabled</li>
- *     <li>Register own namespace ("afterlanguage")</li>
- *     <li>Register PAPI expansion if available</li>
- *     <li>Start Crowdin auto-sync scheduler if enabled</li>
- *     <li>Register as MessageService provider in AfterCore</li>
- *     <li>Register listeners (PlayerJoin, PlayerQuit)</li>
- *     <li>Register commands (/lang, /afterlang)</li>
+ * <li>Load config.yml and crowdin.yml</li>
+ * <li>Connect to database via AfterCore SqlService</li>
+ * <li>Create tables if not exist (migrations)</li>
+ * <li>Load translation files for enabled languages (populate L2)</li>
+ * <li>Pre-compile templates if enabled</li>
+ * <li>Register own namespace ("afterlanguage")</li>
+ * <li>Register PAPI expansion if available</li>
+ * <li>Start Crowdin auto-sync scheduler if enabled</li>
+ * <li>Register as MessageService provider in AfterCore</li>
+ * <li>Register listeners (PlayerJoin, PlayerQuit)</li>
+ * <li>Register commands (/lang, /afterlang)</li>
  * </ol>
  */
 public class PluginLifecycle {
@@ -40,7 +43,9 @@ public class PluginLifecycle {
     /**
      * Executes the startup sequence.
      *
-     * <p>Initializes services and registers components.</p>
+     * <p>
+     * Initializes services and registers components.
+     * </p>
      */
     public void startup() {
         logger.info("[Lifecycle] Starting plugin...");
@@ -57,6 +62,9 @@ public class PluginLifecycle {
         // 4. Register listeners
         registry.registerListeners();
 
+        // 4b. Replay namespace registrations buffered before we were ready
+        registry.replayPendingNamespaceRegistrations();
+
         // 5. Register commands
         registry.registerCommands();
 
@@ -72,7 +80,9 @@ public class PluginLifecycle {
     /**
      * Executes the shutdown sequence.
      *
-     * <p>Saves pending data and gracefully shuts down services.</p>
+     * <p>
+     * Saves pending data and gracefully shuts down services.
+     * </p>
      */
     public void shutdown() {
         logger.info("[Lifecycle] Shutting down...");
@@ -109,6 +119,6 @@ public class PluginLifecycle {
      * Checks if a file exists in the plugin's data folder.
      */
     private boolean fileExists(String fileName) {
-        return new java.io.File(plugin.getDataFolder(), fileName).exists();
+        return new File(plugin.getDataFolder(), fileName).exists();
     }
 }

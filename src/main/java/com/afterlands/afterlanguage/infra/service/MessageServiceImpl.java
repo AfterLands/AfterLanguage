@@ -1,18 +1,23 @@
 package com.afterlands.afterlanguage.infra.service;
 
 import com.afterlands.core.api.messages.Placeholder;
+import com.afterlands.afterlanguage.core.extractor.MessageExtractor;
+import com.afterlands.afterlanguage.core.extractor.InventoryExtractor;
 import com.afterlands.afterlanguage.core.resolver.MessageResolver;
 import com.afterlands.afterlanguage.infra.persistence.PlayerLanguageRepository;
 import com.afterlands.core.api.messages.MessageKey;
 import com.afterlands.core.config.MessageService;
 import com.afterlands.core.metrics.MetricsService;
 import me.clip.placeholderapi.PlaceholderAPI;
+import com.afterlands.afterlanguage.core.resolver.NamespaceManager;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,13 +27,16 @@ import java.util.logging.Logger;
 /**
  * Implementation of AfterCore MessageService using AfterLanguage engine.
  *
- * <p>Provides i18n capabilities via MessageResolver and player language persistence.</p>
+ * <p>
+ * Provides i18n capabilities via MessageResolver and player language
+ * persistence.
+ * </p>
  *
  * <h3>Architecture:</h3>
  * <ul>
- *     <li>Delegates i18n methods to MessageResolver</li>
- *     <li>Falls back to literal key for missing translations</li>
- *     <li>Legacy methods return formatted error message</li>
+ * <li>Delegates i18n methods to MessageResolver</li>
+ * <li>Falls back to literal key for missing translations</li>
+ * <li>Legacy methods return formatted error message</li>
  * </ul>
  *
  */
@@ -36,6 +44,9 @@ public class MessageServiceImpl implements MessageService {
 
     private final MessageResolver messageResolver;
     private final PlayerLanguageRepository languageRepo;
+    private final NamespaceManager namespaceManager;
+    private final MessageExtractor messageExtractor;
+    private final InventoryExtractor inventoryExtractor;
     private final MetricsService metrics;
     private final String defaultLanguage;
     private final Logger logger;
@@ -46,25 +57,33 @@ public class MessageServiceImpl implements MessageService {
     /**
      * Creates message service implementation.
      *
-     * @param messageResolver Translation resolver
-     * @param languageRepo Player language repository
-     * @param metrics Metrics service
-     * @param defaultLanguage Default language code
-     * @param logger Logger
-     * @param debug Enable debug logging
-     * @param papiProcessMessages Whether to process PlaceholderAPI placeholders in messages
+     * @param messageResolver      Translation resolver
+     * @param languageRepo         Player language repository
+     * @param namespaceManager     Namespace manager for external registration
+     * @param messageExtractor     Message extractor for auto-extraction
+     * @param inventoryExtractor   Inventory extractor for auto-extraction
+     * @param metrics              Metrics service
+     * @param defaultLanguage      Default language code
+     * @param logger               Logger
+     * @param debug                Enable debug logging
+     * @param papiProcessMessages  Whether to process PlaceholderAPI placeholders
      */
     public MessageServiceImpl(
             @NotNull MessageResolver messageResolver,
             @NotNull PlayerLanguageRepository languageRepo,
+            @NotNull NamespaceManager namespaceManager,
+            @NotNull MessageExtractor messageExtractor,
+            @NotNull InventoryExtractor inventoryExtractor,
             @NotNull MetricsService metrics,
             @NotNull String defaultLanguage,
             @NotNull Logger logger,
             boolean debug,
-            boolean papiProcessMessages
-    ) {
+            boolean papiProcessMessages) {
         this.messageResolver = Objects.requireNonNull(messageResolver, "messageResolver");
         this.languageRepo = Objects.requireNonNull(languageRepo, "languageRepo");
+        this.namespaceManager = Objects.requireNonNull(namespaceManager, "namespaceManager");
+        this.messageExtractor = Objects.requireNonNull(messageExtractor, "messageExtractor");
+        this.inventoryExtractor = Objects.requireNonNull(inventoryExtractor, "inventoryExtractor");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.defaultLanguage = Objects.requireNonNull(defaultLanguage, "defaultLanguage");
         this.logger = Objects.requireNonNull(logger, "logger");
@@ -102,6 +121,16 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public void send(@NotNull Player player, @NotNull MessageKey key, int count, @NotNull Placeholder... placeholders) {
+        String message = get(player, key, count, placeholders);
+        if (!message.isEmpty()) {
+            player.sendMessage(format(message));
+        }
+    }
+
+    @Override
+    @NotNull
+    public String get(@NotNull Player player, @NotNull MessageKey key, int count,
+            @NotNull Placeholder... placeholders) {
         Objects.requireNonNull(player, "player");
         Objects.requireNonNull(key, "key");
 
@@ -116,10 +145,7 @@ public class MessageServiceImpl implements MessageService {
         String path = key.path() + (count == 1 ? ".one" : ".other");
         String message = messageResolver.resolve(language, key.namespace(), path, toLocal(allPlaceholders));
 
-        if (!message.isEmpty()) {
-            message = applyPapi(player, message);
-            player.sendMessage(format(message));
-        }
+        return applyPapi(player, message);
     }
 
     @Override
@@ -146,17 +172,17 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     @NotNull
-    public String getOrDefault(@NotNull Player player, @NotNull MessageKey key, @NotNull String defaultValue, @NotNull Placeholder... placeholders) {
+    public String getOrDefault(@NotNull Player player, @NotNull MessageKey key, @Nullable String defaultValue,
+            @NotNull Placeholder... placeholders) {
         Objects.requireNonNull(player, "player");
         Objects.requireNonNull(key, "key");
-        Objects.requireNonNull(defaultValue, "defaultValue");
 
         String language = getPlayerLanguage(player.getUniqueId());
         String result = messageResolver.resolve(language, key.namespace(), key.path(), toLocal(placeholders));
 
-        // If result is missing format, return default
+        // If result is missing format, return default (or key path if no default)
         if (result.startsWith("&c[Missing:")) {
-            return defaultValue;
+            return defaultValue != null ? defaultValue : key.path();
         }
 
         return applyPapi(player, result);
@@ -185,7 +211,8 @@ public class MessageServiceImpl implements MessageService {
     }
 
     @Override
-    public void sendBatch(@NotNull Player player, @NotNull List<MessageKey> keys, @NotNull Map<String, Object> sharedPlaceholders) {
+    public void sendBatch(@NotNull Player player, @NotNull List<MessageKey> keys,
+            @NotNull Map<String, Object> sharedPlaceholders) {
         Objects.requireNonNull(player, "player");
         Objects.requireNonNull(keys, "keys");
         Objects.requireNonNull(sharedPlaceholders, "sharedPlaceholders");
@@ -220,8 +247,16 @@ public class MessageServiceImpl implements MessageService {
         Objects.requireNonNull(playerId, "playerId");
         Objects.requireNonNull(language, "language");
 
+        String oldLanguage = languageRepo.getCachedLanguage(playerId).orElse(defaultLanguage);
+
         // Async save (fire and forget)
         languageRepo.setLanguage(playerId, language, false)
+                .thenRun(() -> InventoryCacheInvalidator.onLanguageChanged(
+                        playerId,
+                        oldLanguage,
+                        language,
+                        logger,
+                        debug))
                 .exceptionally(ex -> {
                     logger.warning("[MessageService] Failed to save language for " + playerId + ": " + ex.getMessage());
                     return null;
@@ -240,6 +275,63 @@ public class MessageServiceImpl implements MessageService {
     @NotNull
     public String getDefaultLanguage() {
         return defaultLanguage;
+    }
+
+    // ══════════════════════════════════════════════
+    // NAMESPACE REGISTRATION
+    // ══════════════════════════════════════════════
+
+    @Override
+    public void registerNamespace(@NotNull Plugin plugin, @NotNull String namespace) {
+        Objects.requireNonNull(plugin, "plugin");
+        Objects.requireNonNull(namespace, "namespace");
+
+        if (namespaceManager.isRegistered(namespace)) {
+            if (debug) {
+                logger.info("[MessageService] Namespace already registered: " + namespace);
+            }
+            return;
+        }
+
+        File pluginFolder = plugin.getDataFolder();
+
+        if (debug) {
+            logger.info("[MessageService] Registering namespace '" + namespace + "' for plugin: " + plugin.getName());
+            logger.info("[MessageService] Plugin data folder: " + pluginFolder.getAbsolutePath());
+        }
+
+        // 1. Extract messages.yml -> languages/{lang}/{ns}/messages.yml
+        File messagesFile = new File(pluginFolder, "messages.yml");
+        if (messagesFile.exists()) {
+            if (debug) {
+                logger.info("[MessageService] Found messages.yml, extracting...");
+            }
+            messageExtractor.extract(messagesFile, namespace, "messages");
+        } else if (debug) {
+            logger.warning("[MessageService] messages.yml not found at: " + messagesFile.getAbsolutePath());
+        }
+
+        // 2. Extract inventories.yml -> languages/{lang}/{ns}/gui.yml
+        File inventoriesFile = new File(pluginFolder, "inventories.yml");
+        if (inventoriesFile.exists()) {
+            if (debug) {
+                logger.info("[MessageService] Found inventories.yml, extracting...");
+            }
+            inventoryExtractor.extract(inventoriesFile, namespace, "gui");
+        } else if (debug) {
+            logger.warning("[MessageService] inventories.yml not found at: " + inventoriesFile.getAbsolutePath());
+        }
+
+        // 3. Register namespace and load translations
+        namespaceManager.registerNamespace(namespace, null)
+                .exceptionally(ex -> {
+                    logger.severe("[MessageService] Failed to register namespace '" + namespace +
+                                 "' for plugin " + plugin.getName() + ": " + ex.getMessage());
+                    return null;
+                })
+                .join();
+
+        logger.info("[MessageService] Registered namespace '" + namespace + "' for plugin: " + plugin.getName());
     }
 
     // ══════════════════════════════════════════════
@@ -303,9 +395,10 @@ public class MessageServiceImpl implements MessageService {
      * Applies PlaceholderAPI placeholders to a message if enabled and available.
      * Fast-path: skips PAPI call entirely if message contains no '%' character.
      *
-     * @param player Player context for PAPI resolution (null = skip)
+     * @param player  Player context for PAPI resolution (null = skip)
      * @param message Message to process
-     * @return Message with PAPI placeholders resolved, or original if not applicable
+     * @return Message with PAPI placeholders resolved, or original if not
+     *         applicable
      */
     @NotNull
     private String applyPapi(@Nullable Player player, @NotNull String message) {
@@ -331,8 +424,7 @@ public class MessageServiceImpl implements MessageService {
      */
     @NotNull
     private com.afterlands.afterlanguage.api.model.Placeholder[] toLocal(@NotNull Placeholder... placeholders) {
-        com.afterlands.afterlanguage.api.model.Placeholder[] local =
-                new com.afterlands.afterlanguage.api.model.Placeholder[placeholders.length];
+        com.afterlands.afterlanguage.api.model.Placeholder[] local = new com.afterlands.afterlanguage.api.model.Placeholder[placeholders.length];
         for (int i = 0; i < placeholders.length; i++) {
             local[i] = com.afterlands.afterlanguage.api.model.Placeholder.of(
                     placeholders[i].key(), String.valueOf(placeholders[i].value()));

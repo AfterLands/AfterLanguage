@@ -314,6 +314,10 @@ public class DownloadStrategy {
             String filePath = entry.getKey();
             String content = entry.getValue();
 
+            if (debug) {
+                logger.info("[DownloadStrategy] Processing file: " + filePath + " (size: " + content.length() + " chars)");
+            }
+
             // Extract locale from path (e.g., "en/tutorial/afterquests/afterquests.yml" -> "en")
             String locale = localeMapper.extractLocaleFromPath(filePath);
             if (locale == null) {
@@ -337,7 +341,7 @@ public class DownloadStrategy {
                 }
             }
 
-            // Extract namespace from path (e.g., "tutorial/afterjournal/messages.yml" -> "afterjournal")
+            // Extract namespace from path — namespace is the parent directory of the YAML file
             String namespace = extractNamespaceFromPath(filePath);
             if (namespace == null) {
                 if (debug) {
@@ -369,21 +373,27 @@ public class DownloadStrategy {
 
     /**
      * Extracts namespace from file path.
-     * Example: "pt-BR/afterjournal/messages.yml" -> "afterjournal"
+     *
+     * <p>The namespace is the <b>parent directory</b> of the YAML file, which is
+     * the second-to-last path segment. Crowdin exports follow the structure:
+     * {@code <locale>/<server-dir>/<namespace>/<file>.yml}</p>
+     *
+     * <p>Examples:</p>
+     * <ul>
+     *     <li>{@code en/proxy-level/aftercore/aftercore.yml} → {@code aftercore}</li>
+     *     <li>{@code pt-BR/tutorial/aftertemplate/aftertemplate.yml} → {@code aftertemplate}</li>
+     * </ul>
      */
     @Nullable
     private String extractNamespaceFromPath(@NotNull String filePath) {
         String[] parts = filePath.replace("\\", "/").split("/");
 
-        // Look for pattern: <locale>/<namespace>/<file>.yml
-        for (int i = 0; i < parts.length - 1; i++) {
-            String part = parts[i];
-            // Check if this looks like a locale
-            if (localeMapper.hasCrowdinMapping(part) || part.contains("-") || part.length() <= 5) {
-                // Next part should be namespace
-                if (i + 1 < parts.length && !parts[i + 1].endsWith(".yml")) {
-                    return parts[i + 1];
-                }
+        // Namespace is the parent directory of the YAML file (second-to-last segment)
+        // Structure: <locale>/<server-dir>/<namespace>/<file>.yml
+        if (parts.length >= 3) {
+            String parentDir = parts[parts.length - 2];
+            if (!parentDir.endsWith(".yml") && !parentDir.endsWith(".yaml")) {
+                return parentDir;
             }
         }
 
@@ -413,6 +423,14 @@ public class DownloadStrategy {
 
             if (value instanceof Map) {
                 flattenYaml((Map<String, Object>) value, key, namespace, language, output);
+            } else if (value instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<Object> list = (List<Object>) value;
+                String text = list.stream()
+                        .map(Object::toString)
+                        .collect(Collectors.joining("\n"));
+                String hash = UploadStrategy.calculateMd5(text);
+                output.add(new CrowdinTranslation(namespace, key, language, text, hash));
             } else if (value != null) {
                 String text = value.toString();
                 String hash = UploadStrategy.calculateMd5(text);
@@ -618,7 +636,15 @@ public class DownloadStrategy {
                     YamlConfiguration yamlConfig = YamlConfiguration.loadConfiguration(yamlFile.toFile());
 
                     for (Map.Entry<String, String> update : updates.entrySet()) {
-                        yamlConfig.set(update.getKey(), update.getValue());
+                        String yamlKey = update.getKey();
+                        String text = update.getValue();
+
+                        // Lore keys should be stored as list (split by newline)
+                        if (yamlKey.endsWith(".lore") && text.contains("\n")) {
+                            yamlConfig.set(yamlKey, Arrays.asList(text.split("\n")));
+                        } else {
+                            yamlConfig.set(yamlKey, text);
+                        }
                     }
 
                     yamlConfig.save(yamlFile.toFile());

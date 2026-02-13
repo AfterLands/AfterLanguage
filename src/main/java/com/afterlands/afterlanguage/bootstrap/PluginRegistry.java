@@ -4,6 +4,8 @@ import com.afterlands.afterlanguage.AfterLanguagePlugin;
 import com.afterlands.afterlanguage.api.model.Language;
 import com.afterlands.afterlanguage.api.service.DynamicContentAPI;
 import com.afterlands.afterlanguage.core.cache.TranslationCache;
+import com.afterlands.afterlanguage.core.extractor.InventoryExtractor;
+import com.afterlands.afterlanguage.core.extractor.MessageExtractor;
 import com.afterlands.afterlanguage.core.io.TranslationBackupService;
 import com.afterlands.afterlanguage.core.io.TranslationExporter;
 import com.afterlands.afterlanguage.core.io.TranslationImporter;
@@ -50,20 +52,23 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Dependency Injection container for AfterLanguage.
  *
- * <p>Initializes and manages all services in dependency order.</p>
+ * <p>
+ * Initializes and manages all services in dependency order.
+ * </p>
  *
  * <h3>Service Initialization Order:</h3>
  * <ol>
- *     <li>Load configuration and validate AfterCore</li>
- *     <li>Initialize database (migrations via AfterCore SqlService)</li>
- *     <li>Create core services (Registry, Cache, TemplateEngine)</li>
- *     <li>Create persistence (PlayerLanguageRepository, DynamicTranslationRepository)</li>
- *     <li>Create MessageResolver</li>
- *     <li>Create file loading (YamlTranslationLoader, NamespaceManager)</li>
- *     <li>Load default namespace ("afterlanguage")</li>
- *     <li>Create MessageServiceImpl</li>
- *     <li>Register as AfterCore MessageService provider</li>
- *     <li>Register listeners and commands</li>
+ * <li>Load configuration and validate AfterCore</li>
+ * <li>Initialize database (migrations via AfterCore SqlService)</li>
+ * <li>Create core services (Registry, Cache, TemplateEngine)</li>
+ * <li>Create persistence (PlayerLanguageRepository,
+ * DynamicTranslationRepository)</li>
+ * <li>Create MessageResolver</li>
+ * <li>Create file loading (YamlTranslationLoader, NamespaceManager)</li>
+ * <li>Load default namespace ("afterlanguage")</li>
+ * <li>Create MessageServiceImpl</li>
+ * <li>Register as AfterCore MessageService provider</li>
+ * <li>Register listeners and commands</li>
  * </ol>
  */
 public class PluginRegistry {
@@ -92,6 +97,10 @@ public class PluginRegistry {
     // File loading
     private YamlTranslationLoader yamlLoader;
     private NamespaceManager namespaceManager;
+
+    // Extractors
+    private MessageExtractor messageExtractor;
+    private InventoryExtractor inventoryExtractor;
 
     // Provider
     private MessageServiceImpl messageService;
@@ -148,7 +157,8 @@ public class PluginRegistry {
             // 1. Validate AfterCore
             this.afterCore = AfterCore.get();
             if (afterCore == null) {
-                throw new IllegalStateException("AfterCore not found! Ensure AfterCore is loaded before AfterLanguage.");
+                throw new IllegalStateException(
+                        "AfterCore not found! Ensure AfterCore is loaded before AfterLanguage.");
             }
 
             // 2. Get database datasource
@@ -163,7 +173,8 @@ public class PluginRegistry {
 
             // 4. Initialize default language
             String defaultLangCode = plugin.getConfig().getString("default-language", "pt_br");
-            String defaultLangName = plugin.getConfig().getString("language-names." + defaultLangCode, "Português (Brasil)");
+            String defaultLangName = plugin.getConfig().getString("language-names." + defaultLangCode,
+                    "Português (Brasil)");
             this.defaultLanguage = new Language(defaultLangCode, defaultLangName, true);
 
             logger.info("[Registry] Default language: " + defaultLanguage.name() + " [" + defaultLanguage.code() + "]");
@@ -175,28 +186,27 @@ public class PluginRegistry {
                     (int) (plugin.getConfig().getLong("cache.l1.ttl-seconds", 300) / 60),
                     plugin.getConfig().getInt("cache.l3.max-size", 5000),
                     (int) (plugin.getConfig().getLong("cache.l3.ttl-seconds", 600) / 60),
-                    debug
-            );
+                    debug);
             this.templateEngine = new TemplateEngine(debug);
 
             logger.info("[Registry] Core services initialized (Registry, Cache, TemplateEngine)");
 
             // 6. Create persistence
-            String playerTableName = plugin.getConfig().getString("database.tables.player-language", "afterlanguage_player_language");
+            String playerTableName = plugin.getConfig().getString("database.tables.player-language",
+                    "afterlanguage_player_language");
             this.playerLanguageRepo = new PlayerLanguageRepository(
                     dataSource,
                     playerTableName,
                     logger,
-                    debug
-            );
+                    debug);
 
-            String dynamicTableName = plugin.getConfig().getString("database.tables.dynamic-translations", "afterlanguage_dynamic_translations");
+            String dynamicTableName = plugin.getConfig().getString("database.tables.dynamic-translations",
+                    "afterlanguage_dynamic_translations");
             this.dynamicTranslationRepo = new DynamicTranslationRepository(
                     dataSource,
                     dynamicTableName,
                     logger,
-                    debug
-            );
+                    debug);
 
             logger.info("[Registry] Persistence initialized (PlayerLanguageRepository, DynamicTranslationRepository)");
 
@@ -209,8 +219,7 @@ public class PluginRegistry {
                     plugin.getConfig().getBoolean("missing.show-key", true),
                     plugin.getConfig().getString("missing.format", "&c[Missing: {key}]"),
                     plugin.getConfig().getBoolean("missing.log", false),
-                    debug
-            );
+                    debug);
 
             logger.info("[Registry] MessageResolver initialized");
 
@@ -230,10 +239,22 @@ public class PluginRegistry {
                     registry,
                     cache,
                     logger,
-                    debug
-            );
+                    debug);
 
             logger.info("[Registry] File loading initialized (YamlTranslationLoader, NamespaceManager)");
+
+            // 8b. Create extractors
+            List<String> enabledLanguages = plugin.getConfig().getStringList("enabled-languages");
+            if (enabledLanguages.isEmpty()) {
+                enabledLanguages = List.of(defaultLanguage.code());
+            }
+
+            this.messageExtractor = new MessageExtractor(
+                    languagesDir, defaultLanguage.code(), enabledLanguages, logger, debug);
+            this.inventoryExtractor = new InventoryExtractor(
+                    languagesDir, defaultLanguage.code(), enabledLanguages, logger, debug);
+
+            logger.info("[Registry] Extractors initialized (MessageExtractor, InventoryExtractor)");
 
             // 9. Register default namespace ("afterlanguage")
             // Provision default resources from JAR only on first run
@@ -248,11 +269,18 @@ public class PluginRegistry {
             // Create example translation file if doesn't exist
             if (!Files.exists(defaultNamespaceFolder)) {
                 Files.createDirectories(defaultNamespaceFolder);
-                // createExampleTranslations(defaultNamespaceFolder); // No longer needed
             }
 
             namespaceManager.registerNamespace("afterlanguage", defaultNamespaceFolder).join();
             logger.info("[Registry] Registered namespace: afterlanguage");
+
+            // 9a. Register "aftercore" namespace (extracted from AfterCore's messages.yml)
+            File afterCoreMsgs = new File("plugins/AfterCore/messages.yml");
+            if (afterCoreMsgs.exists()) {
+                messageExtractor.extract(afterCoreMsgs, "aftercore", "messages");
+            }
+            namespaceManager.registerNamespace("aftercore", null).join();
+            logger.info("[Registry] Registered namespace: aftercore");
 
             // 9b. Discover and load any additional namespace folders on disk
             namespaceManager.discoverAndRegisterNewNamespaces();
@@ -268,18 +296,24 @@ public class PluginRegistry {
             this.messageService = new MessageServiceImpl(
                     messageResolver,
                     playerLanguageRepo,
+                    namespaceManager,
+                    messageExtractor,
+                    inventoryExtractor,
                     afterCore.metrics(),
                     defaultLanguage.code(),
                     logger,
                     debug,
-                    papiProcessMessages
-            );
+                    papiProcessMessages);
 
             logger.info("[Registry] MessageServiceImpl created");
 
             // 11. Create Export/Import/Backup services (v1.2.0)
             this.exporter = new TranslationExporter(logger, debug);
             this.importer = new TranslationImporter(dynamicTranslationRepo, logger, debug);
+
+            // Ensure imports directory exists
+            Path importsDir = plugin.getDataFolder().toPath().resolve("imports");
+            Files.createDirectories(importsDir);
 
             Path backupsDir = plugin.getDataFolder().toPath().resolve("backups");
             boolean backupsEnabled = plugin.getConfig().getBoolean("backup.enabled", true);
@@ -291,11 +325,10 @@ public class PluginRegistry {
                     importer,
                     logger,
                     backupsEnabled,
-                    maxBackups
-            );
+                    maxBackups);
 
             logger.info("[Registry] Export/Import/Backup services created (backups: " +
-                       (backupsEnabled ? "enabled, max=" + maxBackups : "disabled") + ")");
+                    (backupsEnabled ? "enabled, max=" + maxBackups : "disabled") + ")");
 
             // 12. Create DynamicContentAPI (v1.2.0)
             this.dynamicContentAPI = new DynamicContentAPIImpl(
@@ -303,8 +336,7 @@ public class PluginRegistry {
                     registry,
                     cache,
                     logger,
-                    debug
-            );
+                    debug);
 
             logger.info("[Registry] DynamicContentAPI created");
 
@@ -319,16 +351,14 @@ public class PluginRegistry {
                     plugin.getConfig(),
                     afterCore,
                     logger,
-                    debug
-            );
+                    debug);
 
             // 16. Create integrations
             this.protocolLibIntegration = new ProtocolLibIntegration(
                     plugin,
                     playerLanguageRepo,
                     logger,
-                    debug
-            );
+                    debug);
 
             this.placeholderExpansion = new AfterLanguageExpansion(
                     plugin,
@@ -336,8 +366,7 @@ public class PluginRegistry {
                     messageResolver,
                     defaultLanguage,
                     logger,
-                    debug
-            );
+                    debug);
 
             logger.info("[Registry] Services initialized successfully!");
 
@@ -353,21 +382,23 @@ public class PluginRegistry {
      */
     private void registerMigrations() {
         String datasourceName = plugin.getConfig().getString("database.datasource", "default");
-        String playerTable = plugin.getConfig().getString("database.tables.player-language", "afterlanguage_player_language");
-        String dynamicTable = plugin.getConfig().getString("database.tables.dynamic-translations", "afterlanguage_dynamic_translations");
+        String playerTable = plugin.getConfig().getString("database.tables.player-language",
+                "afterlanguage_player_language");
+        String dynamicTable = plugin.getConfig().getString("database.tables.dynamic-translations",
+                "afterlanguage_dynamic_translations");
 
         // Migration 1: Create player_language table
         afterCore.sql().registerMigration(datasourceName, "create_player_language_table", conn -> {
             String sql = """
-                CREATE TABLE IF NOT EXISTS %s (
-                    uuid VARCHAR(36) PRIMARY KEY,
-                    language VARCHAR(10) NOT NULL,
-                    auto_detected BOOLEAN DEFAULT FALSE,
-                    first_join TIMESTAMP NOT NULL,
-                    updated_at TIMESTAMP NOT NULL,
-                    INDEX idx_language (language)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                """.formatted(playerTable);
+                    CREATE TABLE IF NOT EXISTS %s (
+                        uuid VARCHAR(36) PRIMARY KEY,
+                        language VARCHAR(10) NOT NULL,
+                        auto_detected BOOLEAN DEFAULT FALSE,
+                        first_join TIMESTAMP NOT NULL,
+                        updated_at TIMESTAMP NOT NULL,
+                        INDEX idx_language (language)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """.formatted(playerTable);
 
             try (var stmt = conn.createStatement()) {
                 stmt.execute(sql);
@@ -377,23 +408,23 @@ public class PluginRegistry {
         // Migration 2: Create dynamic_translations table
         afterCore.sql().registerMigration(datasourceName, "create_dynamic_translations_table", conn -> {
             String sql = """
-                CREATE TABLE IF NOT EXISTS %s (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    namespace VARCHAR(64) NOT NULL,
-                    translation_key VARCHAR(128) NOT NULL,
-                    language VARCHAR(10) NOT NULL,
-                    text TEXT NOT NULL,
-                    plural_text TEXT,
-                    source VARCHAR(16) DEFAULT 'manual',
-                    status VARCHAR(16) DEFAULT 'pending',
-                    created_at TIMESTAMP NOT NULL,
-                    updated_at TIMESTAMP NOT NULL,
-                    UNIQUE KEY uk_translation (namespace, translation_key, language),
-                    INDEX idx_namespace (namespace),
-                    INDEX idx_language (language),
-                    INDEX idx_status (status)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                """.formatted(dynamicTable);
+                    CREATE TABLE IF NOT EXISTS %s (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        namespace VARCHAR(64) NOT NULL,
+                        translation_key VARCHAR(128) NOT NULL,
+                        language VARCHAR(10) NOT NULL,
+                        text TEXT NOT NULL,
+                        plural_text TEXT,
+                        source VARCHAR(16) DEFAULT 'manual',
+                        status VARCHAR(16) DEFAULT 'pending',
+                        created_at TIMESTAMP NOT NULL,
+                        updated_at TIMESTAMP NOT NULL,
+                        UNIQUE KEY uk_translation (namespace, translation_key, language),
+                        INDEX idx_namespace (namespace),
+                        INDEX idx_language (language),
+                        INDEX idx_status (status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """.formatted(dynamicTable);
 
             try (var stmt = conn.createStatement()) {
                 stmt.execute(sql);
@@ -403,12 +434,13 @@ public class PluginRegistry {
         // Migration 3: Add plural forms columns (v1.2.0)
         afterCore.sql().registerMigration(datasourceName, "add_plural_forms_columns", conn -> {
             String[] alterSqls = {
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_zero TEXT AFTER text".formatted(dynamicTable),
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_one TEXT AFTER plural_zero".formatted(dynamicTable),
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_two TEXT AFTER plural_one".formatted(dynamicTable),
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_few TEXT AFTER plural_two".formatted(dynamicTable),
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_many TEXT AFTER plural_few".formatted(dynamicTable),
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_other TEXT AFTER plural_many".formatted(dynamicTable)
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_zero TEXT AFTER text".formatted(dynamicTable),
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_one TEXT AFTER plural_zero".formatted(dynamicTable),
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_two TEXT AFTER plural_one".formatted(dynamicTable),
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_few TEXT AFTER plural_two".formatted(dynamicTable),
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_many TEXT AFTER plural_few".formatted(dynamicTable),
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS plural_other TEXT AFTER plural_many"
+                            .formatted(dynamicTable)
             };
 
             try (var stmt = conn.createStatement()) {
@@ -425,10 +457,14 @@ public class PluginRegistry {
         // Migration 4: Add Crowdin tracking columns (v1.3.0)
         afterCore.sql().registerMigration(datasourceName, "add_crowdin_columns_v130", conn -> {
             String[] alterSqls = {
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS crowdin_string_id BIGINT AFTER updated_at".formatted(dynamicTable),
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS crowdin_hash VARCHAR(64) AFTER crowdin_string_id".formatted(dynamicTable),
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP NULL AFTER crowdin_hash".formatted(dynamicTable),
-                "ALTER TABLE %s ADD COLUMN IF NOT EXISTS sync_status VARCHAR(16) DEFAULT 'pending' AFTER last_synced_at".formatted(dynamicTable)
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS crowdin_string_id BIGINT AFTER updated_at"
+                            .formatted(dynamicTable),
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS crowdin_hash VARCHAR(64) AFTER crowdin_string_id"
+                            .formatted(dynamicTable),
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP NULL AFTER crowdin_hash"
+                            .formatted(dynamicTable),
+                    "ALTER TABLE %s ADD COLUMN IF NOT EXISTS sync_status VARCHAR(16) DEFAULT 'pending' AFTER last_synced_at"
+                            .formatted(dynamicTable)
             };
 
             try (var stmt = conn.createStatement()) {
@@ -442,39 +478,44 @@ public class PluginRegistry {
 
                 // Add indices
                 try {
-                    stmt.execute("CREATE INDEX IF NOT EXISTS idx_crowdin_string_id ON %s(crowdin_string_id)".formatted(dynamicTable));
-                } catch (Exception ignored) {}
+                    stmt.execute("CREATE INDEX IF NOT EXISTS idx_crowdin_string_id ON %s(crowdin_string_id)"
+                            .formatted(dynamicTable));
+                } catch (Exception ignored) {
+                }
                 try {
-                    stmt.execute("CREATE INDEX IF NOT EXISTS idx_sync_status ON %s(sync_status)".formatted(dynamicTable));
-                } catch (Exception ignored) {}
+                    stmt.execute(
+                            "CREATE INDEX IF NOT EXISTS idx_sync_status ON %s(sync_status)".formatted(dynamicTable));
+                } catch (Exception ignored) {
+                }
             }
 
             logger.info("[Migration] Added Crowdin tracking columns (v1.3.0)");
         });
 
         // Migration 5: Create Crowdin sync log table (v1.3.0)
-        String syncLogTable = plugin.getConfig().getString("database.tables.crowdin-sync-log", "afterlanguage_crowdin_sync_log");
+        String syncLogTable = plugin.getConfig().getString("database.tables.crowdin-sync-log",
+                "afterlanguage_crowdin_sync_log");
         afterCore.sql().registerMigration(datasourceName, "create_crowdin_sync_log_v130", conn -> {
             String sql = """
-                CREATE TABLE IF NOT EXISTS %s (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    sync_id VARCHAR(36) NOT NULL,
-                    operation VARCHAR(16) NOT NULL,
-                    namespace VARCHAR(64),
-                    language VARCHAR(10),
-                    strings_uploaded INT DEFAULT 0,
-                    strings_downloaded INT DEFAULT 0,
-                    strings_skipped INT DEFAULT 0,
-                    conflicts INT DEFAULT 0,
-                    errors TEXT,
-                    started_at TIMESTAMP NOT NULL,
-                    completed_at TIMESTAMP NULL,
-                    status VARCHAR(16) DEFAULT 'running',
-                    INDEX idx_sync_id (sync_id),
-                    INDEX idx_namespace (namespace),
-                    INDEX idx_status (status)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                """.formatted(syncLogTable);
+                    CREATE TABLE IF NOT EXISTS %s (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        sync_id VARCHAR(36) NOT NULL,
+                        operation VARCHAR(16) NOT NULL,
+                        namespace VARCHAR(64),
+                        language VARCHAR(10),
+                        strings_uploaded INT DEFAULT 0,
+                        strings_downloaded INT DEFAULT 0,
+                        strings_skipped INT DEFAULT 0,
+                        conflicts INT DEFAULT 0,
+                        errors TEXT,
+                        started_at TIMESTAMP NOT NULL,
+                        completed_at TIMESTAMP NULL,
+                        status VARCHAR(16) DEFAULT 'running',
+                        INDEX idx_sync_id (sync_id),
+                        INDEX idx_namespace (namespace),
+                        INDEX idx_status (status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """.formatted(syncLogTable);
 
             try (var stmt = conn.createStatement()) {
                 stmt.execute(sql);
@@ -491,13 +532,13 @@ public class PluginRegistry {
      */
     private void provisionDefaultResources() {
         String[] resources = {
-            "languages/en_us/afterlanguage/gui.yml",
-            "languages/en_us/afterlanguage/messages.yml",
-            "languages/es_es/afterlanguage/gui.yml",
-            "languages/es_es/afterlanguage/messages.yml",
-            "languages/pt_br/afterlanguage/gui.yml",
-            "languages/pt_br/afterlanguage/messages.yml",
-            "languages/pt_br/afterlanguage/pluralization_example.yml"
+                "languages/en_us/afterlanguage/gui.yml",
+                "languages/en_us/afterlanguage/messages.yml",
+                "languages/es_es/afterlanguage/gui.yml",
+                "languages/es_es/afterlanguage/messages.yml",
+                "languages/pt_br/afterlanguage/gui.yml",
+                "languages/pt_br/afterlanguage/messages.yml",
+                "languages/pt_br/afterlanguage/pluralization_example.yml"
         };
 
         for (String resourcePath : resources) {
@@ -519,7 +560,9 @@ public class PluginRegistry {
     /**
      * Initializes Crowdin integration services (v1.3.0).
      *
-     * <p>Only initializes if crowdin.enabled is true in config.yml.</p>
+     * <p>
+     * Only initializes if crowdin.enabled is true in config.yml.
+     * </p>
      */
     private void initializeCrowdin() {
         this.crowdinEnabled = plugin.getConfig().getBoolean("crowdin.enabled", false);
@@ -544,8 +587,7 @@ public class PluginRegistry {
             // Create CrowdinConfig from both crowdin.yml and config.yml
             this.crowdinConfig = new CrowdinConfig(
                     crowdinYml,
-                    plugin.getConfig().getConfigurationSection("crowdin")
-            );
+                    plugin.getConfig().getConfigurationSection("crowdin"));
 
             // Load credentials
             this.crowdinCredentials = new CredentialManager(crowdinYml);
@@ -560,7 +602,7 @@ public class PluginRegistry {
             }
 
             logger.info("[Registry] Crowdin credentials loaded (project: " +
-                       crowdinCredentials.getProjectId() + ", token: " + crowdinCredentials.getMaskedToken() + ")");
+                    crowdinCredentials.getProjectId() + ", token: " + crowdinCredentials.getMaskedToken() + ")");
 
             // Create HTTP client
             HttpClient httpClient = HttpClient.newBuilder()
@@ -573,8 +615,7 @@ public class PluginRegistry {
                     crowdinCredentials.getApiToken(),
                     crowdinCredentials.getProjectId(),
                     logger,
-                    debug
-            );
+                    debug);
 
             // Create locale mapper
             this.localeMapper = new LocaleMapper(crowdinConfig.getLocaleMappings());
@@ -583,8 +624,7 @@ public class PluginRegistry {
             // Create conflict resolver
             this.conflictResolver = ConflictResolver.create(
                     crowdinConfig.getConflictResolution(),
-                    logger
-            );
+                    logger);
             logger.info("[Registry] Conflict resolution: " + conflictResolver.getName());
 
             // Create upload strategy
@@ -592,8 +632,7 @@ public class PluginRegistry {
                     crowdinClient,
                     crowdinConfig,
                     logger,
-                    debug
-            );
+                    debug);
 
             // Create download strategy
             this.downloadStrategy = new DownloadStrategy(
@@ -603,8 +642,7 @@ public class PluginRegistry {
                     crowdinConfig,
                     namespaceManager.getLanguagesDir(),
                     logger,
-                    debug
-            );
+                    debug);
 
             // Create sync engine
             this.crowdinSyncEngine = new CrowdinSyncEngine(
@@ -620,8 +658,7 @@ public class PluginRegistry {
                     conflictResolver,
                     crowdinConfig,
                     logger,
-                    debug
-            );
+                    debug);
 
             // Create scheduler (if auto-sync enabled)
             if (crowdinConfig.isAutoSyncEnabled()) {
@@ -629,10 +666,9 @@ public class PluginRegistry {
                         plugin,
                         crowdinSyncEngine,
                         crowdinConfig,
-                        logger
-                );
+                        logger);
                 logger.info("[Registry] Auto-sync scheduler created (interval: " +
-                           crowdinConfig.getAutoSyncIntervalMinutes() + " min)");
+                        crowdinConfig.getAutoSyncIntervalMinutes() + " min)");
             }
 
             // Create webhook server (if enabled)
@@ -642,10 +678,9 @@ public class PluginRegistry {
                         crowdinConfig.getWebhookSecret(),
                         crowdinSyncEngine,
                         logger,
-                        debug
-                );
+                        debug);
                 logger.info("[Registry] Webhook server created (port: " +
-                           crowdinConfig.getWebhookPort() + ")");
+                        crowdinConfig.getWebhookPort() + ")");
             }
 
             // Create event listener
@@ -653,35 +688,31 @@ public class PluginRegistry {
                     dynamicTranslationRepo,
                     crowdinConfig,
                     logger,
-                    debug
-            );
+                    debug);
 
             // Create command handler
             this.crowdinCommand = new CrowdinCommand(
                     this,
                     crowdinSyncEngine,
                     crowdinConfig,
-                    crowdinScheduler
-            );
+                    crowdinScheduler);
 
             // Create public API
             this.crowdinAPI = new CrowdinAPIImpl(
                     crowdinSyncEngine,
                     crowdinConfig,
-                    crowdinCredentials.getProjectId()
-            );
+                    crowdinCredentials.getProjectId());
 
             // Create Redis broadcaster (if enabled)
             if (plugin.getConfig().getBoolean("redis.enabled", false) &&
-                plugin.getConfig().getBoolean("redis.events.crowdin-sync", true)) {
+                    plugin.getConfig().getBoolean("redis.events.crowdin-sync", true)) {
                 String channel = plugin.getConfig().getString("redis.channel", "afterlanguage:sync");
                 this.redisSyncBroadcaster = new RedisSyncBroadcaster(
                         channel,
                         dynamicContentAPI,
                         cache,
                         logger,
-                        debug
-                );
+                        debug);
                 logger.info("[Registry] Redis sync broadcaster created (channel: " + channel + ")");
             }
 
@@ -697,7 +728,9 @@ public class PluginRegistry {
     /**
      * Starts Crowdin services (scheduler, webhook).
      *
-     * <p>Called by PluginLifecycle after all services are initialized.</p>
+     * <p>
+     * Called by PluginLifecycle after all services are initialized.
+     * </p>
      */
     public void startCrowdinServices() {
         if (!crowdinEnabled) {
@@ -732,7 +765,9 @@ public class PluginRegistry {
     /**
      * Stops Crowdin services.
      *
-     * <p>Called by PluginLifecycle during shutdown.</p>
+     * <p>
+     * Called by PluginLifecycle during shutdown.
+     * </p>
      */
     public void stopCrowdinServices() {
         if (!crowdinEnabled) {
@@ -787,9 +822,49 @@ public class PluginRegistry {
     }
 
     /**
+     * Replays namespace registrations that were buffered in AfterCore's
+     * DefaultMessageService before AfterLanguage was ready.
+     *
+     * <p>Only processes namespaces that plugins explicitly requested via
+     * {@code registerNamespace()} — no guessing or scanning.</p>
+     */
+    public void replayPendingNamespaceRegistrations() {
+        var coreMessages = afterCore.messages();
+        if (coreMessages instanceof com.afterlands.core.config.impl.DefaultMessageService dms) {
+            var pending = dms.drainPendingNamespaceRegistrations();
+            if (pending.isEmpty()) return;
+
+            for (var entry : pending) {
+                try {
+                    messageService.registerNamespace(entry.plugin(), entry.namespace());
+                } catch (Exception e) {
+                    logger.warning("[Registry] Failed to replay namespace registration '"
+                            + entry.namespace() + "' for " + entry.plugin().getName() + ": " + e.getMessage());
+                }
+            }
+            logger.info("[Registry] Replayed " + pending.size() + " buffered namespace registration(s)");
+        }
+    }
+
+    /**
      * Registers commands via AfterCore CommandFramework.
      */
     public void registerCommands() {
+        // Register custom argument types
+        var typeRegistry = com.afterlands.core.commands.parser.ArgumentTypeRegistry.instance();
+        typeRegistry.registerForPlugin(plugin, "namespace",
+                new com.afterlands.afterlanguage.infra.command.types.NamespaceType(namespaceManager));
+        typeRegistry.registerForPlugin(plugin, "language",
+                new com.afterlands.afterlanguage.infra.command.types.LanguageType(plugin.getConfig()));
+        typeRegistry.registerForPlugin(plugin, "backupId",
+                new com.afterlands.afterlanguage.infra.command.types.BackupIdType(backupService));
+        typeRegistry.registerForPlugin(plugin, "importFile",
+                new com.afterlands.afterlanguage.infra.command.types.ImportFileType(
+                        plugin.getDataFolder().toPath().resolve("imports")));
+        typeRegistry.registerForPlugin(plugin, "yamlFile",
+                new com.afterlands.afterlanguage.infra.command.types.NamespaceYamlFileType(namespaceManager));
+        logger.info("[Registry] Custom argument types registered");
+
         // Create command instances
         this.langCommand = new LangCommand(this);
         this.afterLangCommand = new AfterLangCommand(this);

@@ -330,6 +330,33 @@ public class CrowdinClient {
         return listDirectories(0, 0);
     }
 
+    /**
+     * Deletes a file from the project.
+     *
+     * @param fileId File ID to delete
+     * @return CompletableFuture that completes when deletion is done
+     */
+    @NotNull
+    public CompletableFuture<Void> deleteFile(long fileId) {
+        return request("DELETE", "/projects/" + projectId + "/files/" + fileId, null)
+                .thenApply(response -> null);
+    }
+
+    /**
+     * Deletes a directory from the project.
+     *
+     * <p>Note: The directory must be empty before deletion. Delete all files
+     * and subdirectories first.</p>
+     *
+     * @param directoryId Directory ID to delete
+     * @return CompletableFuture that completes when deletion is done
+     */
+    @NotNull
+    public CompletableFuture<Void> deleteDirectory(long directoryId) {
+        return request("DELETE", "/projects/" + projectId + "/directories/" + directoryId, null)
+                .thenApply(response -> null);
+    }
+
     // ══════════════════════════════════════════════
     // STORAGE OPERATIONS
     // ══════════════════════════════════════════════
@@ -442,10 +469,14 @@ public class CrowdinClient {
      * @return CompletableFuture with the response object
      */
     @NotNull
-    public CompletableFuture<JsonObject> uploadTranslation(long fileId, @NotNull String languageId, long storageId) {
+    public CompletableFuture<JsonObject> uploadTranslation(
+            long fileId, @NotNull String languageId, long storageId,
+            boolean autoApproveImported) {
         JsonObject body = new JsonObject();
         body.addProperty("storageId", storageId);
         body.addProperty("fileId", fileId);
+        body.addProperty("importEqSuggestions", true);
+        body.addProperty("autoApproveImported", autoApproveImported);
 
         return request("POST", "/projects/" + projectId + "/translations/" + languageId, body)
                 .thenApply(response -> getDataObject(response));

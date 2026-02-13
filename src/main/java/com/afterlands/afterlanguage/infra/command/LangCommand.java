@@ -1,6 +1,7 @@
 package com.afterlands.afterlanguage.infra.command;
 
 import com.afterlands.afterlanguage.bootstrap.PluginRegistry;
+import com.afterlands.afterlanguage.infra.service.InventoryCacheInvalidator;
 import com.afterlands.core.actions.ActionService;
 import com.afterlands.core.actions.ActionSpec;
 import com.afterlands.core.api.AfterCoreAPI;
@@ -16,12 +17,14 @@ import com.afterlands.core.config.MessageService;
 import com.afterlands.core.inventory.InventoryContext;
 import com.afterlands.core.inventory.InventoryService;
 import org.bukkit.Bukkit;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -29,11 +32,11 @@ import java.util.UUID;
  *
  * <h3>Subcommands:</h3>
  * <ul>
- *     <li>/lang - Opens GUI language selector (default)</li>
- *     <li>/lang gui - Opens GUI language selector</li>
- *     <li>/lang set {@literal <}language{@literal >} - Change your language</li>
- *     <li>/lang list - List available languages</li>
- *     <li>/lang info - Show your current language</li>
+ * <li>/lang - Opens GUI language selector (default)</li>
+ * <li>/lang gui - Opens GUI language selector</li>
+ * <li>/lang set {@literal <}language{@literal >} - Change your language</li>
+ * <li>/lang list - List available languages</li>
+ * <li>/lang info - Show your current language</li>
  * </ul>
  *
  * @author AfterLands Team
@@ -55,7 +58,7 @@ public class LangCommand {
      * Default command - opens language selector GUI.
      * Executes when player runs /lang without arguments.
      */
-    @Subcommand("")
+    @Subcommand(value = "", description = "Open language selector GUI")
     public void langDefault(CommandContext ctx, @Sender @NotNull Player player) {
         openLanguageSelector(player);
     }
@@ -64,7 +67,7 @@ public class LangCommand {
      * Opens language selector GUI.
      * Command: /lang gui
      */
-    @Subcommand("gui")
+    @Subcommand(value = "gui", description = "Open language selector GUI")
     public void gui(CommandContext ctx, @Sender @NotNull Player player) {
         openLanguageSelector(player);
     }
@@ -73,13 +76,13 @@ public class LangCommand {
      * Sets player language.
      * Command: /lang set {@literal <}language{@literal >}
      *
-     * @param player Player executing command
+     * @param player   Player executing command
      * @param language Language code (pt_br, en_us, etc.)
      */
-    @Subcommand("set")
+    @Subcommand(value = "set", description = "Change your language", usage = "/lang set <language>", usageHelp = "&c<language>")
     public void setLanguage(CommandContext ctx,
-                           @Sender @NotNull Player player,
-                           @Arg("language") @NotNull String language) {
+            @Sender @NotNull Player player,
+            @Arg(value = "language", type = "language") @NotNull String language) {
         String newLanguage = language.toLowerCase();
         UUID playerId = player.getUniqueId();
 
@@ -100,6 +103,13 @@ public class LangCommand {
         // Save async
         registry.getPlayerLanguageRepo().setLanguage(playerId, newLanguage, false)
                 .thenAccept(v -> {
+                    InventoryCacheInvalidator.onLanguageChanged(
+                            playerId,
+                            oldLanguage,
+                            newLanguage,
+                            registry.getLogger(),
+                            registry.getPlugin().getConfig().getBoolean("debug", false));
+
                     // Send confirmation message in NEW language
                     msgService.send(player, key("messages.language.changed"),
                             Placeholder.of("language", newLanguage));
@@ -119,7 +129,7 @@ public class LangCommand {
      * Lists all available languages.
      * Command: /lang list
      */
-    @Subcommand("list")
+    @Subcommand(value = "list", description = "List available languages", usage = "/lang list")
     public void listLanguages(CommandContext ctx, @Sender @NotNull Player player) {
         String currentLang = registry.getPlayerLanguageRepo()
                 .getCachedLanguage(player.getUniqueId())
@@ -149,7 +159,7 @@ public class LangCommand {
      * Shows current language info.
      * Command: /lang info
      */
-    @Subcommand("info")
+    @Subcommand(value = "info", description = "Show your current language")
     public void showInfo(CommandContext ctx, @Sender @NotNull Player player) {
         String currentLang = registry.getPlayerLanguageRepo()
                 .getCachedLanguage(player.getUniqueId())
@@ -262,12 +272,12 @@ public class LangCommand {
     /**
      * Executes language-change actions from config.
      *
-     * @param player Player
+     * @param player  Player
      * @param oldLang Old language
      * @param newLang New language
      */
     private void executeLanguageChangeActions(@NotNull Player player, @NotNull String oldLang,
-                                             @NotNull String newLang) {
+            @NotNull String newLang) {
         try {
             // Get ActionService from AfterCore
             AfterCoreAPI afterCore = com.afterlands.core.api.AfterCore.get();
@@ -276,7 +286,7 @@ public class LangCommand {
             }
 
             ActionService actionService = afterCore.actions();
-            org.bukkit.configuration.file.FileConfiguration config = registry.getPlugin().getConfig();
+            FileConfiguration config = registry.getPlugin().getConfig();
 
             // Execute "any" actions
             List<String> anyActions = config.getStringList("actions.language-change.any");
@@ -300,8 +310,7 @@ public class LangCommand {
             @NotNull Player player,
             @NotNull List<String> actions,
             @NotNull String oldLang,
-            @NotNull String newLang
-    ) {
+            @NotNull String newLang) {
         if (actions.isEmpty()) {
             return;
         }

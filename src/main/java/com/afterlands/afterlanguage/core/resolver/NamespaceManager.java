@@ -103,14 +103,13 @@ public class NamespaceManager {
 
         return CompletableFuture.runAsync(() -> {
             try {
-                // Track registration
-                if (defaultFolder != null) {
-                    registeredNamespaces.put(namespace, defaultFolder);
-                }
+                // Track registration for ALL namespaces.
+                // External plugin namespaces usually register with defaultFolder == null.
+                // If we don't track them here, Crowdin cleanup can falsely treat them as orphaned.
+                Path nsDir = languagesDir.resolve(sourceLanguage.code()).resolve(namespace);
+                registeredNamespaces.putIfAbsent(namespace, defaultFolder != null ? defaultFolder : nsDir);
 
                 // Check if namespace directory exists for source language
-                Path nsDir = languagesDir.resolve(sourceLanguage.code()).resolve(namespace);
-
                 if (!Files.exists(nsDir)) {
                     if (defaultFolder != null && Files.exists(defaultFolder)) {
                         logger.info("[NamespaceManager] Namespace '" + namespace + "' not found. Copying defaults from: " + defaultFolder);

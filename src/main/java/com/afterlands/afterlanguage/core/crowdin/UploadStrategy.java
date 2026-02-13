@@ -5,6 +5,9 @@ import com.google.gson.JsonObject;
 import org.jetbrains.annotations.NotNull;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.nodes.Node;
+import org.yaml.snakeyaml.nodes.Tag;
+import org.yaml.snakeyaml.representer.Representer;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -56,12 +59,23 @@ public class UploadStrategy {
         this.logger = Objects.requireNonNull(logger, "logger cannot be null");
         this.debug = debug;
 
-        // Configure YAML writer
+        // Configure YAML writer with literal block style for multiline strings
         DumperOptions options = new DumperOptions();
         options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
         options.setPrettyFlow(true);
         options.setIndent(2);
-        this.yaml = new Yaml(options);
+
+        Representer representer = new Representer() {
+            @Override
+            protected Node representScalar(Tag tag, String value, Character style) {
+                if (value != null && value.contains("\n")) {
+                    style = '|';
+                }
+                return super.representScalar(tag, value, style);
+            }
+        };
+
+        this.yaml = new Yaml(representer, options);
     }
 
     /**
@@ -215,8 +229,28 @@ public class UploadStrategy {
         String yamlContent = convertToYaml(allTranslations);
         String fileName = namespace + ".yml";
 
-        // Upload flow: storage -> file (create or update)
+        // Upload flow: storage -> file (create or update) -> auto-approve source language
         return uploadYamlFile(namespace, fileName, yamlContent, directoryId)
+                .thenCompose(fileId -> {
+                    // After uploading source file, also upload as translation for source language
+                    // with autoApproveImported=true so strings are marked as approved on Crowdin
+                    String sourceLanguage = config.getSourceLanguage();
+                    if (debug) {
+                        logger.info("[UploadStrategy] Auto-approving source language '" + sourceLanguage +
+                                   "' translations for file " + fileId);
+                    }
+
+                    return client.uploadToStorage(fileName, yamlContent)
+                            .thenCompose(storageId -> client.uploadTranslation(
+                                    fileId, sourceLanguage, storageId, true))
+                            .thenApply(response -> fileId)
+                            .exceptionally(ex -> {
+                                // Non-fatal: source file was uploaded, just approval failed
+                                logger.warning("[UploadStrategy] Auto-approve for source language failed: " +
+                                             ex.getMessage());
+                                return fileId;
+                            });
+                })
                 .thenApply(fileId -> {
                     List<String> uploadedKeys = changedTranslations.stream()
                             .map(t -> t.translation().fullKey())
@@ -310,6 +344,14 @@ public class UploadStrategy {
             String key = t.key();
             String text = t.text();
 
+            // Strip trailing whitespace from each line to avoid YAML escaping (\ \)
+            // Spacer lines like ' ' become '' which renders identically in Minecraft
+            if (text.contains("\n")) {
+                text = Arrays.stream(text.split("\n", -1))
+                        .map(String::stripTrailing)
+                        .collect(java.util.stream.Collectors.joining("\n"));
+            }
+
             // Handle nested keys (e.g., "quest.started" -> {quest: {started: value}})
             setNestedValue(root, key, text);
         }
@@ -378,8 +420,9 @@ public class UploadStrategy {
                    namespace + " [" + language + " -> " + crowdinLangId + "]");
 
         // Upload to storage, then upload as translation
+        boolean autoApprove = config.isAutoApproveImported();
         return client.uploadToStorage(fileName, yamlContent)
-                .thenCompose(storageId -> client.uploadTranslation(fileId, crowdinLangId, storageId))
+                .thenCompose(storageId -> client.uploadTranslation(fileId, crowdinLangId, storageId, autoApprove))
                 .thenApply(response -> {
                     List<String> keys = translations.stream()
                             .map(Translation::fullKey)

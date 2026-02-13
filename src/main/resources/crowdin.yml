@@ -51,6 +51,15 @@ upload:
   # Clean up (delete removed strings from Crowdin)
   cleanup-mode: false
 
+  # Auto-approve translations uploaded via 'uploadtranslation' command
+  # When true, uploaded translations skip the approval step on Crowdin
+  auto-approve-imported: false
+
+  # Automatically cleanup orphaned files after sync
+  # When true, runs cleanup after successful sync to remove files/directories
+  # that no longer exist locally. Requires server-id configured for safety.
+  cleanup-on-sync: false
+
 # Download settings
 download:
   # Skip untranslated strings (use fallback instead)

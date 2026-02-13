@@ -36,6 +36,8 @@ public class CrowdinConfig {
     private final boolean autoUpload;
     private final boolean updateStrings;
     private final boolean cleanupMode;
+    private final boolean autoApproveImported;
+    private final boolean cleanupOnSync;
 
     // Download settings
     private final boolean skipUntranslated;
@@ -95,6 +97,8 @@ public class CrowdinConfig {
         this.autoUpload = upload != null && upload.getBoolean("auto-upload", true);
         this.updateStrings = upload != null && upload.getBoolean("update-strings", true);
         this.cleanupMode = upload != null && upload.getBoolean("cleanup-mode", false);
+        this.autoApproveImported = upload != null && upload.getBoolean("auto-approve-imported", false);
+        this.cleanupOnSync = upload != null && upload.getBoolean("cleanup-on-sync", false);
 
         // Download settings
         ConfigurationSection download = crowdinYml.getConfigurationSection("download");
@@ -410,6 +414,29 @@ public class CrowdinConfig {
      */
     public boolean isCleanupMode() {
         return cleanupMode;
+    }
+
+    /**
+     * Checks if uploaded translations should be auto-approved on Crowdin.
+     *
+     * <p>When true (default), translations uploaded via {@code uploadtranslation}
+     * are marked as approved immediately, skipping the manual approval step.</p>
+     */
+    public boolean isAutoApproveImported() {
+        return autoApproveImported;
+    }
+
+    /**
+     * Checks if automatic cleanup should run after sync.
+     *
+     * <p>When enabled, orphaned files and directories are automatically deleted
+     * from Crowdin after a successful sync operation. Requires server-id to be
+     * configured for safety.</p>
+     *
+     * @return true if cleanup-on-sync is enabled
+     */
+    public boolean isCleanupOnSync() {
+        return cleanupOnSync;
     }
 
     /**
