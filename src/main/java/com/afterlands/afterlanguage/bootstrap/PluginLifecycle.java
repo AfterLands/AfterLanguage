@@ -1,6 +1,8 @@
 package com.afterlands.afterlanguage.bootstrap;
 
 import com.afterlands.afterlanguage.AfterLanguagePlugin;
+import com.afterlands.core.api.AfterCore;
+import com.afterlands.core.api.AfterCoreAPI;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
@@ -65,13 +67,16 @@ public class PluginLifecycle {
         // 4b. Replay namespace registrations buffered before we were ready
         registry.replayPendingNamespaceRegistrations();
 
-        // 5. Register commands
+        // 5. Register inventories with plugin namespace
+        registerInventories();
+
+        // 6. Register commands
         registry.registerCommands();
 
-        // 6. Enable integrations (ProtocolLib, PlaceholderAPI)
+        // 7. Enable integrations (ProtocolLib, PlaceholderAPI)
         registry.enableIntegrations();
 
-        // 7. Start Crowdin services (v1.3.0)
+        // 8. Start Crowdin services (v1.3.0)
         registry.startCrowdinServices();
 
         logger.info("[Lifecycle] Startup complete!");
@@ -111,8 +116,28 @@ public class PluginLifecycle {
         if (!fileExists("crowdin.yml")) {
             plugin.saveResource("crowdin.yml", false);
         }
+        if (!fileExists("inventories.yml")) {
+            plugin.saveResource("inventories.yml", false);
+        }
 
         logger.info("[Lifecycle] Default configs saved.");
+    }
+
+    private void registerInventories() {
+        File inventoriesFile = new File(plugin.getDataFolder(), "inventories.yml");
+        if (!inventoriesFile.exists()) {
+            logger.warning("[Lifecycle] inventories.yml not found, skipping inventory registration");
+            return;
+        }
+
+        AfterCoreAPI afterCore = AfterCore.get();
+        if (afterCore == null || afterCore.inventory() == null) {
+            logger.warning("[Lifecycle] AfterCore InventoryService unavailable, skipping inventory registration");
+            return;
+        }
+
+        int count = afterCore.inventory().registerInventories(plugin, inventoriesFile);
+        logger.info("[Lifecycle] Registered " + count + " inventories with namespace: " + plugin.getName());
     }
 
     /**

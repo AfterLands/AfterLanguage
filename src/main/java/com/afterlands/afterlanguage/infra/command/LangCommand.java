@@ -21,6 +21,7 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.File;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +46,8 @@ import java.util.UUID;
 @Command(name = "lang", description = "Manage your language preferences")
 @Permission("afterlanguage.use")
 public class LangCommand {
+
+    private static final String LANGUAGE_SELECTOR_ID = "language_selector";
 
     private final PluginRegistry registry;
     private final MessageService msgService;
@@ -109,10 +112,6 @@ public class LangCommand {
                             newLanguage,
                             registry.getLogger(),
                             registry.getPlugin().getConfig().getBoolean("debug", false));
-
-                    // Send confirmation message in NEW language
-                    msgService.send(player, key("messages.language.changed"),
-                            Placeholder.of("language", newLanguage));
 
                     // Execute language-change actions if configured
                     executeLanguageChangeActions(player, oldLanguage, newLanguage);
@@ -213,12 +212,35 @@ public class LangCommand {
                     .resolve(currentLang, "afterlanguage", "messages.gui.selector.current_lang");
             placeholders.put("current_lang_indicator", indicator);
 
+            boolean namespacedRegistered = isNamespacedInventoryRegistered(inventoryService);
+            boolean plainRegistered = inventoryService.isInventoryRegistered(LANGUAGE_SELECTOR_ID);
+
+            if (!namespacedRegistered && !plainRegistered) {
+                registerPluginInventories(inventoryService);
+                namespacedRegistered = isNamespacedInventoryRegistered(inventoryService);
+                plainRegistered = inventoryService.isInventoryRegistered(LANGUAGE_SELECTOR_ID);
+            }
+
+            if (!namespacedRegistered && !plainRegistered) {
+                forceSyncLanguageSelectorInventory(inventoryService);
+                namespacedRegistered = isNamespacedInventoryRegistered(inventoryService);
+                plainRegistered = inventoryService.isInventoryRegistered(LANGUAGE_SELECTOR_ID);
+            }
+
+            if (!namespacedRegistered && !plainRegistered) {
+                throw new IllegalArgumentException("Inventory not found after registration attempt: " +
+                        LANGUAGE_SELECTOR_ID);
+            }
+
             // Create context with player ID and inventory ID
-            InventoryContext context = new InventoryContext(player.getUniqueId(), "language_selector")
+            InventoryContext context = new InventoryContext(player.getUniqueId(), LANGUAGE_SELECTOR_ID)
                     .withPlaceholders(placeholders);
 
-            // Open inventory using inventory ID directly
-            inventoryService.openInventory(player, "language_selector", context);
+            if (namespacedRegistered) {
+                inventoryService.openInventory(registry.getPlugin(), player, LANGUAGE_SELECTOR_ID, context);
+            } else {
+                inventoryService.openInventory(player, LANGUAGE_SELECTOR_ID, context);
+            }
 
         } catch (Exception e) {
             registry.getMessageService().send(player, key("messages.error.gui_failed"));
@@ -226,6 +248,28 @@ public class LangCommand {
                     player.getName() + ": " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    private boolean isNamespacedInventoryRegistered(@NotNull InventoryService inventoryService) {
+        String namespacedId = registry.getPlugin().getName() + ":" + LANGUAGE_SELECTOR_ID;
+        return inventoryService.isInventoryRegistered(namespacedId);
+    }
+
+    private void registerPluginInventories(@NotNull InventoryService inventoryService) {
+        File inventoriesFile = new File(registry.getPlugin().getDataFolder(), "inventories.yml");
+        if (!inventoriesFile.exists()) {
+            return;
+        }
+        int loaded = inventoryService.registerInventories(registry.getPlugin(), inventoriesFile);
+        if (loaded > 0 && registry.getPlugin().getConfig().getBoolean("debug", false)) {
+            registry.getLogger().info("[LangCommand] Registered " + loaded + " inventory file(s) from " +
+                    inventoriesFile.getPath());
+        }
+    }
+
+    private void forceSyncLanguageSelectorInventory(@NotNull InventoryService inventoryService) {
+        registry.getPlugin().saveResource("inventories.yml", true);
+        registerPluginInventories(inventoryService);
     }
 
     /**

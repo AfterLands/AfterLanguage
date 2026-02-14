@@ -1,0 +1,65 @@
+config-version: 1
+
+default-items:
+  filler:
+    material: STAINED_GLASS_PANE
+    data: 7
+    name: " "
+    type: filler
+
+language_selector:
+  title: "&8%alang_afterlanguage:messages.gui.selector.title%"
+  size: 27
+  items:
+    "12":
+      material: "head: eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOWE0NjQ3NWQ1ZGNjODE1ZjZjNWYyODU5ZWRiYjEwNjExZjNlODYxYzBlYjE0ZjA4ODE2MWIzYzBjY2IyYjBkOSJ9fX0="
+      type: lang-pt-br
+      name: "&2&lPortuguês"
+      lore:
+        - '&fDefine seu idioma para Português (BR).'
+        - ''
+        - '&e► Clique para selecionar!'
+      actions:
+        - "player_command: lang set pt_br"
+        - "close"
+      variant0:
+        material: "head: eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOWE0NjQ3NWQ1ZGNjODE1ZjZjNWYyODU5ZWRiYjEwNjExZjNlODYxYzBlYjE0ZjA4ODE2MWIzYzBjY2IyYjBkOSJ9fX0="
+        name: "&2&lPortuguês"
+        lore:
+          - '&fSeu idioma está definido para Português (BR).'
+          - ''
+          - '&a✔ Idioma Selecionado'
+        view-conditions:
+        - '%alang_player_language% == pt_br'
+
+    "14":
+      material: "head: eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNGNhYzk3NzRkYTEyMTcyNDg1MzJjZTE0N2Y3ODMxZjY3YTEyZmRjY2ExY2YwY2I0YjM4NDhkZTZiYzk0YjQifX19"
+      type: lang-en-us
+      name: "&9&lEnglish (US)"
+      lore:
+        - '&fSets your language to English (US).'
+        - ''
+        - ' &c&oNotice: English translations may be'
+        - ' &c&oincomplete. Please contact our staff '
+        - ' &c&oif you find any issues.'
+        - ''
+        - '&e► Click to select!'
+      actions:
+        - "player_command: lang set en_us"
+        - "close"
+      variant0:
+        material: "head: eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNGNhYzk3NzRkYTEyMTcyNDg1MzJjZTE0N2Y3ODMxZjY3YTEyZmRjY2ExY2YwY2I0YjM4NDhkZTZiYzk0YjQifX19"
+        name: "&9&lEnglish"
+        lore:
+          - '&fYour language is set to English (US).'
+          - ''
+          - ' &c&oNotice: English translations may be'
+          - ' &c&oincomplete. Please contact our staff '
+          - ' &c&oif you find any issues.'
+          - ''
+          - '&a✔ Current Language'
+        view-conditions:
+        - '%alang_player_language% == en_us'
+    "0":
+      material: item:filler
+      duplicate: all
