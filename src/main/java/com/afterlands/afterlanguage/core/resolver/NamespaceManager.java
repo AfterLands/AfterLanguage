@@ -37,6 +37,7 @@ public class NamespaceManager {
     private final YamlTranslationLoader yamlLoader;
     private final TranslationRegistry registry;
     private final TranslationCache cache;
+    private final MessageResolver messageResolver;
     private final Logger logger;
     private final boolean debug;
 
@@ -54,6 +55,7 @@ public class NamespaceManager {
      * @param yamlLoader YAML loader
      * @param registry Translation registry (L2)
      * @param cache Translation cache (L1/L3)
+     * @param messageResolver Message resolver (missing key tracking)
      * @param logger Logger
      * @param debug Enable debug logging
      */
@@ -63,6 +65,7 @@ public class NamespaceManager {
             @NotNull YamlTranslationLoader yamlLoader,
             @NotNull TranslationRegistry registry,
             @NotNull TranslationCache cache,
+            @NotNull MessageResolver messageResolver,
             @NotNull Logger logger,
             boolean debug
     ) {
@@ -71,6 +74,7 @@ public class NamespaceManager {
         this.yamlLoader = Objects.requireNonNull(yamlLoader, "yamlLoader");
         this.registry = Objects.requireNonNull(registry, "registry");
         this.cache = Objects.requireNonNull(cache, "cache");
+        this.messageResolver = Objects.requireNonNull(messageResolver, "messageResolver");
         this.logger = Objects.requireNonNull(logger, "logger");
         this.debug = debug;
     }
@@ -122,6 +126,7 @@ public class NamespaceManager {
 
                 // Load translations for ALL languages and reload atomically
                 loadAllLanguagesForNamespace(namespace);
+                messageResolver.resetMissingKeyTracking();
 
                 logger.info("[NamespaceManager] Registered namespace: " + namespace);
 
@@ -156,6 +161,7 @@ public class NamespaceManager {
 
                 // Invalidate caches (atomic operation)
                 cache.invalidateNamespace(namespace);
+                messageResolver.resetMissingKeyTracking();
 
                 logger.info("[NamespaceManager] Reloaded namespace: " + namespace);
 

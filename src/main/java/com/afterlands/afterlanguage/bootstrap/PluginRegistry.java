@@ -14,9 +14,11 @@ import com.afterlands.afterlanguage.core.resolver.NamespaceManager;
 import com.afterlands.afterlanguage.core.resolver.TranslationRegistry;
 import com.afterlands.afterlanguage.core.resolver.YamlTranslationLoader;
 import com.afterlands.afterlanguage.core.service.DynamicContentAPIImpl;
+import com.afterlands.afterlanguage.core.service.TranslationEventDispatcher;
 import com.afterlands.afterlanguage.core.template.TemplateEngine;
 import com.afterlands.afterlanguage.infra.command.AfterLangCommand;
 import com.afterlands.afterlanguage.infra.command.LangCommand;
+import com.afterlands.afterlanguage.infra.event.BukkitTranslationEventDispatcher;
 import com.afterlands.afterlanguage.infra.listener.PlayerLanguageListener;
 import com.afterlands.afterlanguage.infra.papi.AfterLanguageExpansion;
 import com.afterlands.afterlanguage.infra.persistence.DynamicTranslationRepository;
@@ -39,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 import java.io.File;
 import java.io.IOException;
 import java.net.http.HttpClient;
+import java.sql.SQLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -238,6 +241,7 @@ public class PluginRegistry {
                     yamlLoader,
                     registry,
                     cache,
+                    messageResolver,
                     logger,
                     debug);
 
@@ -331,10 +335,13 @@ public class PluginRegistry {
                     (backupsEnabled ? "enabled, max=" + maxBackups : "disabled") + ")");
 
             // 12. Create DynamicContentAPI (v1.2.0)
+            TranslationEventDispatcher translationEventDispatcher = new BukkitTranslationEventDispatcher(plugin);
             this.dynamicContentAPI = new DynamicContentAPIImpl(
                     dynamicTranslationRepo,
                     registry,
                     cache,
+                    messageResolver,
+                    translationEventDispatcher,
                     logger,
                     debug);
 
@@ -447,8 +454,13 @@ public class PluginRegistry {
                 for (String alterSql : alterSqls) {
                     try {
                         stmt.execute(alterSql);
-                    } catch (Exception e) {
-                        // Column might already exist, ignore
+                    } catch (SQLException e) {
+                        if (isAlreadyExistsError(e)) {
+                            logger.fine("[Migration] Skipping existing column change: " + e.getMessage());
+                        } else {
+                            logger.severe("[Migration] Failed SQL: " + alterSql + " -> " + e.getMessage());
+                            throw new RuntimeException(e);
+                        }
                     }
                 }
             }
@@ -471,8 +483,13 @@ public class PluginRegistry {
                 for (String sql : alterSqls) {
                     try {
                         stmt.execute(sql);
-                    } catch (Exception e) {
-                        // Column might already exist, ignore
+                    } catch (SQLException e) {
+                        if (isAlreadyExistsError(e)) {
+                            logger.fine("[Migration] Skipping existing column change: " + e.getMessage());
+                        } else {
+                            logger.severe("[Migration] Failed SQL: " + sql + " -> " + e.getMessage());
+                            throw new RuntimeException(e);
+                        }
                     }
                 }
 
@@ -480,12 +497,20 @@ public class PluginRegistry {
                 try {
                     stmt.execute("CREATE INDEX IF NOT EXISTS idx_crowdin_string_id ON %s(crowdin_string_id)"
                             .formatted(dynamicTable));
-                } catch (Exception ignored) {
+                } catch (SQLException e) {
+                    if (!isAlreadyExistsError(e)) {
+                        logger.severe("[Migration] Failed creating idx_crowdin_string_id: " + e.getMessage());
+                        throw new RuntimeException(e);
+                    }
                 }
                 try {
                     stmt.execute(
                             "CREATE INDEX IF NOT EXISTS idx_sync_status ON %s(sync_status)".formatted(dynamicTable));
-                } catch (Exception ignored) {
+                } catch (SQLException e) {
+                    if (!isAlreadyExistsError(e)) {
+                        logger.severe("[Migration] Failed creating idx_sync_status: " + e.getMessage());
+                        throw new RuntimeException(e);
+                    }
                 }
             }
 
@@ -525,6 +550,27 @@ public class PluginRegistry {
         });
 
         logger.info("[Registry] Database migrations registered");
+    }
+
+    private static boolean isAlreadyExistsError(@NotNull SQLException e) {
+        String state = e.getSQLState();
+        if ("42S21".equals(state) || "42S11".equals(state)) {
+            return true;
+        }
+
+        int code = e.getErrorCode();
+        if (code == 1060 || code == 1061) {
+            return true;
+        }
+
+        String message = e.getMessage();
+        if (message == null) {
+            return false;
+        }
+        String normalized = message.toLowerCase();
+        return normalized.contains("duplicate column")
+                || normalized.contains("already exists")
+                || normalized.contains("duplicate key name");
     }
 
     /**
@@ -648,7 +694,6 @@ public class PluginRegistry {
             this.crowdinSyncEngine = new CrowdinSyncEngine(
                     crowdinClient,
                     dynamicContentAPI,
-                    dynamicTranslationRepo,
                     registry,
                     namespaceManager,
                     cache,

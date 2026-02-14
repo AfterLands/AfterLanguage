@@ -2,6 +2,7 @@ package com.afterlands.afterlanguage.infra.persistence;
 
 import com.afterlands.afterlanguage.api.model.PluralCategory;
 import com.afterlands.afterlanguage.api.model.Translation;
+import com.afterlands.afterlanguage.core.service.DynamicTranslationStore;
 import com.afterlands.core.database.SqlDataSource;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -55,7 +56,7 @@ import java.util.logging.Logger;
  *     <li>exists() - Check if translation exists</li>
  * </ul>
  */
-public class DynamicTranslationRepository {
+public class DynamicTranslationRepository implements DynamicTranslationStore {
 
     private final SqlDataSource dataSource;
     private final Logger logger;

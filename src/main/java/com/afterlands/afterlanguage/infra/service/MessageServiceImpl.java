@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Logger;
 
 /**
@@ -98,6 +99,11 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public void send(@NotNull Player player, @NotNull MessageKey key, @NotNull Placeholder... placeholders) {
+        if (!Bukkit.isPrimaryThread()) {
+            runOnMainThread(() -> send(player, key, placeholders));
+            return;
+        }
+
         long start = System.nanoTime();
         try {
             Objects.requireNonNull(player, "player");
@@ -121,6 +127,10 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public void send(@NotNull Player player, @NotNull MessageKey key, int count, @NotNull Placeholder... placeholders) {
+        if (!Bukkit.isPrimaryThread()) {
+            runOnMainThread(() -> send(player, key, count, placeholders));
+            return;
+        }
         String message = get(player, key, count, placeholders);
         if (!message.isEmpty()) {
             player.sendMessage(format(message));
@@ -191,6 +201,10 @@ public class MessageServiceImpl implements MessageService {
     @Override
     public void broadcast(@NotNull MessageKey key, @NotNull Placeholder... placeholders) {
         Objects.requireNonNull(key, "key");
+        if (!Bukkit.isPrimaryThread()) {
+            runOnMainThread(() -> broadcast(key, placeholders));
+            return;
+        }
 
         // Send to each player in their language
         for (Player player : Bukkit.getOnlinePlayers()) {
@@ -202,6 +216,10 @@ public class MessageServiceImpl implements MessageService {
     public void broadcast(@NotNull MessageKey key, @NotNull String permission, @NotNull Placeholder... placeholders) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(permission, "permission");
+        if (!Bukkit.isPrimaryThread()) {
+            runOnMainThread(() -> broadcast(key, permission, placeholders));
+            return;
+        }
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (player.hasPermission(permission)) {
@@ -216,6 +234,10 @@ public class MessageServiceImpl implements MessageService {
         Objects.requireNonNull(player, "player");
         Objects.requireNonNull(keys, "keys");
         Objects.requireNonNull(sharedPlaceholders, "sharedPlaceholders");
+        if (!Bukkit.isPrimaryThread()) {
+            runOnMainThread(() -> sendBatch(player, keys, sharedPlaceholders));
+            return;
+        }
 
         // Convert map to Placeholder array
         Placeholder[] placeholders = sharedPlaceholders.entrySet().stream()
@@ -300,38 +322,35 @@ public class MessageServiceImpl implements MessageService {
             logger.info("[MessageService] Plugin data folder: " + pluginFolder.getAbsolutePath());
         }
 
-        // 1. Extract messages.yml -> languages/{lang}/{ns}/messages.yml
         File messagesFile = new File(pluginFolder, "messages.yml");
-        if (messagesFile.exists()) {
-            if (debug) {
-                logger.info("[MessageService] Found messages.yml, extracting...");
-            }
-            messageExtractor.extract(messagesFile, namespace, "messages");
-        } else if (debug) {
-            logger.warning("[MessageService] messages.yml not found at: " + messagesFile.getAbsolutePath());
-        }
-
-        // 2. Extract inventories.yml -> languages/{lang}/{ns}/gui.yml
         File inventoriesFile = new File(pluginFolder, "inventories.yml");
-        if (inventoriesFile.exists()) {
-            if (debug) {
-                logger.info("[MessageService] Found inventories.yml, extracting...");
-            }
-            inventoryExtractor.extract(inventoriesFile, namespace, "gui");
-        } else if (debug) {
-            logger.warning("[MessageService] inventories.yml not found at: " + inventoriesFile.getAbsolutePath());
-        }
 
-        // 3. Register namespace and load translations
-        namespaceManager.registerNamespace(namespace, null)
+        CompletableFuture.runAsync(() -> {
+                    if (messagesFile.exists()) {
+                        if (debug) {
+                            logger.info("[MessageService] Found messages.yml, extracting...");
+                        }
+                        messageExtractor.extract(messagesFile, namespace, "messages");
+                    } else if (debug) {
+                        logger.warning("[MessageService] messages.yml not found at: " + messagesFile.getAbsolutePath());
+                    }
+                    if (inventoriesFile.exists()) {
+                        if (debug) {
+                            logger.info("[MessageService] Found inventories.yml, extracting...");
+                        }
+                        inventoryExtractor.extract(inventoriesFile, namespace, "gui");
+                    } else if (debug) {
+                        logger.warning("[MessageService] inventories.yml not found at: " + inventoriesFile.getAbsolutePath());
+                    }
+                })
+                .thenCompose(v -> namespaceManager.registerNamespace(namespace, null))
+                .thenRun(() -> logger.info(
+                        "[MessageService] Registered namespace '" + namespace + "' for plugin: " + plugin.getName()))
                 .exceptionally(ex -> {
                     logger.severe("[MessageService] Failed to register namespace '" + namespace +
                                  "' for plugin " + plugin.getName() + ": " + ex.getMessage());
                     return null;
-                })
-                .join();
-
-        logger.info("[MessageService] Registered namespace '" + namespace + "' for plugin: " + plugin.getName());
+                });
     }
 
     // ══════════════════════════════════════════════
@@ -343,6 +362,10 @@ public class MessageServiceImpl implements MessageService {
     public void send(@NotNull CommandSender sender, @NotNull String path) {
         Objects.requireNonNull(sender, "sender");
         Objects.requireNonNull(path, "path");
+        if (!Bukkit.isPrimaryThread()) {
+            runOnMainThread(() -> send(sender, path));
+            return;
+        }
 
         // For MVP, just send the path as-is
         sender.sendMessage(format("&c[Legacy path-based messages not supported: " + path + "]"));
@@ -359,6 +382,10 @@ public class MessageServiceImpl implements MessageService {
     public void sendRaw(@NotNull CommandSender sender, @NotNull String raw) {
         Objects.requireNonNull(sender, "sender");
         Objects.requireNonNull(raw, "raw");
+        if (!Bukkit.isPrimaryThread()) {
+            runOnMainThread(() -> sendRaw(sender, raw));
+            return;
+        }
 
         sender.sendMessage(format(raw));
     }
@@ -405,6 +432,10 @@ public class MessageServiceImpl implements MessageService {
         if (!papiProcessMessages || !papiAvailable || player == null) {
             return message;
         }
+        if (!Bukkit.isPrimaryThread()) {
+            // PlaceholderAPI is a Bukkit integration; keep calls on primary thread only.
+            return message;
+        }
         if (message.indexOf('%') == -1) {
             return message;
         }
@@ -430,5 +461,19 @@ public class MessageServiceImpl implements MessageService {
                     placeholders[i].key(), String.valueOf(placeholders[i].value()));
         }
         return local;
+    }
+
+    private void runOnMainThread(@NotNull Runnable action) {
+        if (Bukkit.isPrimaryThread()) {
+            action.run();
+            return;
+        }
+
+        Plugin plugin = Bukkit.getPluginManager().getPlugin("AfterLanguage");
+        if (plugin == null) {
+            logger.warning("[MessageService] Cannot schedule main-thread task: plugin not found");
+            return;
+        }
+        Bukkit.getScheduler().runTask(plugin, action);
     }
 }

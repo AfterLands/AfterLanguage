@@ -2,7 +2,7 @@ package com.afterlands.afterlanguage.core.io;
 
 import com.afterlands.afterlanguage.api.model.PluralCategory;
 import com.afterlands.afterlanguage.api.model.Translation;
-import com.afterlands.afterlanguage.infra.persistence.DynamicTranslationRepository;
+import com.afterlands.afterlanguage.core.service.DynamicTranslationStore;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.jetbrains.annotations.NotNull;
@@ -56,12 +56,12 @@ import java.util.stream.Stream;
  */
 public class TranslationImporter {
 
-    private final DynamicTranslationRepository repository;
+    private final DynamicTranslationStore repository;
     private final Logger logger;
     private final boolean debug;
 
     public TranslationImporter(
-            @NotNull DynamicTranslationRepository repository,
+            @NotNull DynamicTranslationStore repository,
             @NotNull Logger logger,
             boolean debug
     ) {

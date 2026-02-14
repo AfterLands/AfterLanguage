@@ -18,6 +18,7 @@ import com.afterlands.core.commands.annotations.Subcommand;
 import com.afterlands.core.commands.execution.CommandContext;
 import com.afterlands.core.config.MessageService;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
+import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
@@ -116,6 +117,10 @@ public class AfterLangCommand {
          * for Console.
          */
         private void sendMsg(@NotNull CommandSender sender, @NotNull String key, @NotNull Placeholder... placeholders) {
+                if (!Bukkit.isPrimaryThread()) {
+                        runOnMainThread(() -> sendMsg(sender, key, placeholders));
+                        return;
+                }
                 if (sender instanceof Player player) {
                         registry.getMessageService().send(player, key(key), placeholders);
                 } else {
@@ -127,6 +132,14 @@ public class AfterLangCommand {
                                 sender.sendMessage(registry.getMessageService().format(message));
                         }
                 }
+        }
+
+        private void runOnMainThread(@NotNull Runnable action) {
+                if (Bukkit.isPrimaryThread()) {
+                        action.run();
+                        return;
+                }
+                Bukkit.getScheduler().runTask(registry.getPlugin(), action);
         }
 
         /**
@@ -167,41 +180,42 @@ public class AfterLangCommand {
 
                 long startTime = System.currentTimeMillis();
 
-                try {
-                        if (namespace != null && !namespace.isEmpty()) {
-                                // Discover new namespaces before checking registration
+                CompletableFuture<Void> reloadFuture;
+                if (namespace != null && !namespace.isEmpty()) {
+                        reloadFuture = CompletableFuture.runAsync(() -> {
                                 registry.getNamespaceManager().discoverAndRegisterNewNamespaces();
-
                                 if (!registry.getNamespaceManager().isRegistered(namespace)) {
-                                        sendMsg(sender, "messages.namespace.not-found",
-                                                        Placeholder.of("namespace", namespace));
-                                        return;
+                                        throw new IllegalArgumentException("namespace-not-found:" + namespace);
                                 }
+                        }).thenCompose(v -> registry.getNamespaceManager().reloadNamespace(namespace))
+                                        .thenRun(() -> sendMsg(sender, "messages.namespace.reloaded",
+                                                        Placeholder.of("namespace", namespace)));
+                } else {
+                        reloadFuture = registry.getNamespaceManager().reloadAll()
+                                        .thenRun(() -> sendMsg(sender, "messages.admin.reload_all"));
+                }
 
-                                registry.getNamespaceManager().reloadNamespace(namespace).join();
-                                sendMsg(sender, "messages.namespace.reloaded",
-                                                Placeholder.of("namespace", namespace));
-
-                        } else {
-                                // Reload all namespaces
-                                registry.getNamespaceManager().reloadAll().join();
-                                sendMsg(sender, "messages.admin.reload_all");
-                        }
-
+                reloadFuture.thenRun(() -> {
                         long elapsed = System.currentTimeMillis() - startTime;
                         sendMsg(sender, "messages.admin.reload-complete",
                                         Placeholder.of("time", String.valueOf(elapsed)));
-
                         registry.getLogger().info("[AfterLangCommand] Translations reloaded by " +
                                         sender.getName() + " in " + elapsed + "ms");
-
-                } catch (Exception e) {
-                        String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                        sendMsg(sender, "messages.admin.reload_failed",
-                                        Placeholder.of("error", errorMsg));
+                }).exceptionally(ex -> {
+                        Throwable root = ex;
+                        while (root.getCause() != null) {
+                                root = root.getCause();
+                        }
+                        String errorMsg = root.getMessage() != null ? root.getMessage() : root.getClass().getSimpleName();
+                        if (errorMsg.startsWith("namespace-not-found:") && namespace != null) {
+                                sendMsg(sender, "messages.namespace.not-found",
+                                                Placeholder.of("namespace", namespace));
+                                return null;
+                        }
+                        sendMsg(sender, "messages.admin.reload_failed", Placeholder.of("error", errorMsg));
                         registry.getLogger().warning("[AfterLangCommand] Reload failed: " + errorMsg);
-                        e.printStackTrace();
-                }
+                        return null;
+                });
         }
 
         /**
@@ -661,29 +675,25 @@ public class AfterLangCommand {
                                 // Copy file to target location (overwrite if exists)
                                 Files.copy(sourceFile, targetPath,
                                                 java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-
-                                // Reload namespace to pick up changes
-                                registry.getNamespaceManager().reloadAll();
-
-                                sendMsg(sender, "messages.admin.import_success");
-                                sendMsg(sender, "messages.admin.import_target_path",
-                                                Placeholder.of("path", targetPath.toString()));
-                                sendMsg(sender, "messages.admin.import_reloaded");
-
-                                registry.getLogger().info("[AfterLangCommand] Import completed by " +
-                                                sender.getName() + ": " + displayFileName + " -> " + finalTargetFileName);
-
                         } catch (Exception e) {
-                                sendMsg(sender, "messages.admin.import_failed",
-                                                Placeholder.of("error", e.getMessage()));
-                                registry.getLogger().warning("[AfterLangCommand] Import failed: " + e.getMessage());
-                                e.printStackTrace();
+                                throw new RuntimeException(e);
                         }
-                }).exceptionally(ex -> {
-                        sendMsg(sender, "messages.admin.import_failed",
-                                        Placeholder.of("error", ex.getMessage()));
-                        return null;
-                });
+                }).thenCompose(v -> registry.getNamespaceManager().reloadAll())
+                                .thenRun(() -> {
+                                        sendMsg(sender, "messages.admin.import_success");
+                                        sendMsg(sender, "messages.admin.import_target_path",
+                                                        Placeholder.of("path", targetPath.toString()));
+                                        sendMsg(sender, "messages.admin.import_reloaded");
+
+                                        registry.getLogger().info("[AfterLangCommand] Import completed by " +
+                                                        sender.getName() + ": " + displayFileName + " -> " + finalTargetFileName);
+                                })
+                                .exceptionally(ex -> {
+                                        sendMsg(sender, "messages.admin.import_failed",
+                                                        Placeholder.of("error", ex.getMessage()));
+                                        registry.getLogger().warning("[AfterLangCommand] Import failed: " + ex.getMessage());
+                                        return null;
+                                });
         }
 
         // ══════════════════════════════════════════════
@@ -835,7 +845,12 @@ public class AfterLangCommand {
                                         sendMsg(sender, "messages.admin.import_reloading");
                                         registry.getDynamicContentAPI().reloadNamespace(namespace)
                                                         .thenRun(() -> sendMsg(sender,
-                                                                        "messages.admin.import_cache_reloaded"));
+                                                                        "messages.admin.import_cache_reloaded"))
+                                                        .exceptionally(ex -> {
+                                                                sendMsg(sender, "messages.admin.dynamic_reload_failed",
+                                                                                Placeholder.of("error", ex.getMessage()));
+                                                                return null;
+                                                        });
 
                                         registry.getLogger().info("[AfterLangCommand] Backup restored by " +
                                                         sender.getName() + ": " + backupId + " -> " + namespace);

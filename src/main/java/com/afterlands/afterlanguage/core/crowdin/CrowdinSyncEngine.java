@@ -7,7 +7,6 @@ import com.afterlands.afterlanguage.core.cache.TranslationCache;
 import com.afterlands.afterlanguage.core.io.TranslationBackupService;
 import com.afterlands.afterlanguage.core.resolver.NamespaceManager;
 import com.afterlands.afterlanguage.core.resolver.TranslationRegistry;
-import com.afterlands.afterlanguage.infra.persistence.DynamicTranslationRepository;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -41,7 +40,6 @@ public class CrowdinSyncEngine {
 
     private final CrowdinClient client;
     private final DynamicContentAPI dynamicAPI;
-    private final DynamicTranslationRepository dynamicRepo;
     private final TranslationRegistry registry;
     private final NamespaceManager namespaceManager;
     private final TranslationCache cache;
@@ -68,7 +66,6 @@ public class CrowdinSyncEngine {
     public CrowdinSyncEngine(
             @NotNull CrowdinClient client,
             @NotNull DynamicContentAPI dynamicAPI,
-            @NotNull DynamicTranslationRepository dynamicRepo,
             @NotNull TranslationRegistry registry,
             @NotNull NamespaceManager namespaceManager,
             @NotNull TranslationCache cache,
@@ -82,7 +79,6 @@ public class CrowdinSyncEngine {
     ) {
         this.client = Objects.requireNonNull(client);
         this.dynamicAPI = Objects.requireNonNull(dynamicAPI);
-        this.dynamicRepo = Objects.requireNonNull(dynamicRepo);
         this.registry = Objects.requireNonNull(registry);
         this.namespaceManager = Objects.requireNonNull(namespaceManager);
         this.cache = Objects.requireNonNull(cache);
@@ -674,9 +670,8 @@ public class CrowdinSyncEngine {
         for (Translation t : translations) {
             if (uploadedSet.contains(t.fullKey())) {
                 String hash = UploadStrategy.calculateMd5(t.text());
-                // Store the hash via dynamicRepo
-                // Note: This requires adding a method to update crowdin_hash
-                // For now, we'll log this as a TODO
+                // Store hash persistence is intentionally skipped here.
+                // Upload strategy currently always uploads full content.
                 if (debug) {
                     logger.fine("[CrowdinSyncEngine] Would update hash for " + t.fullKey() + ": " + hash);
                 }
@@ -844,17 +839,10 @@ public class CrowdinSyncEngine {
         logger.info("[CrowdinSyncEngine] Server owns " + serverOwnedNamespaces.size() +
                    " namespaces under /" + serverId + "/ (total registered: " + registeredNamespaces.size() + ")");
 
-        // List all files and directories on Crowdin
-        return CompletableFuture.allOf(
-                client.listFiles(),
-                client.listDirectories()
-        ).thenApply(v -> List.of(
-                client.listFiles().join(),
-                client.listDirectories().join()
-        )).thenApply(results -> {
-            List<com.google.gson.JsonObject> allFiles = results.get(0);
-            List<com.google.gson.JsonObject> allDirectories = results.get(1);
-
+        // List all files and directories on Crowdin using the same futures
+        CompletableFuture<List<com.google.gson.JsonObject>> filesFuture = client.listFiles();
+        CompletableFuture<List<com.google.gson.JsonObject>> directoriesFuture = client.listDirectories();
+        return filesFuture.thenCombine(directoriesFuture, (allFiles, allDirectories) -> {
             List<OrphanedResource> orphanedFiles = new ArrayList<>();
             List<OrphanedResource> orphanedDirs = new ArrayList<>();
 
