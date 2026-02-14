@@ -4,7 +4,7 @@ AfterLanguage is an enterprise i18n plugin for the AfterLands Minecraft ecosyste
 
 ## Current Version
 
-- Plugin: `1.5.2`
+- Plugin: `1.5.3`
 - Build target: `Java 21 --enable-preview`
 - Hard dependency: `AfterCore` (built against `1.5.6`, recommended runtime `1.5.2+`)
 
